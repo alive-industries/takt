@@ -1,4 +1,4 @@
-import { syncToGitHub } from './github-api.js';
+import { syncToGitHub, fetchAllProjects, fetchProjectNumberFields } from './github-api.js';
 
 const ALARM_NAME = 'takt-tick';
 const MAX_COMPLETED = 50;
@@ -115,6 +115,27 @@ async function handleMessage({ action, payload }) {
       return { ok: true, session: activeSession };
     }
 
+    case 'SET_TIME': {
+      if (!activeSession) {
+        return { error: 'No active session to update' };
+      }
+      // payload.ms is the total elapsed time the user wants
+      const newMs = payload.ms;
+      if (typeof newMs !== 'number' || newMs < 0) {
+        return { error: 'Invalid time value' };
+      }
+      if (activeSession.status === 'running') {
+        // Reset startedAt to now, put everything into accumulatedMs
+        activeSession.accumulatedMs = newMs;
+        activeSession.startedAt = Date.now();
+      } else {
+        // Paused — just set accumulated
+        activeSession.accumulatedMs = newMs;
+      }
+      await saveSession(activeSession);
+      return { ok: true, session: activeSession };
+    }
+
     case 'STOP': {
       if (!activeSession) {
         return { error: 'No active session to stop' };
@@ -148,6 +169,26 @@ async function handleMessage({ action, payload }) {
         elapsedMs: computeElapsed(activeSession),
         completedSessions,
       };
+    }
+
+    case 'DELETE_SESSION': {
+      const index = payload.index;
+      if (typeof index !== 'number' || index < 0 || index >= completedSessions.length) {
+        return { error: 'Invalid session index' };
+      }
+      completedSessions.splice(index, 1);
+      await chrome.storage.local.set({ completedSessions });
+      return { ok: true, completedSessions };
+    }
+
+    case 'FETCH_ALL_PROJECTS': {
+      const result = await fetchAllProjects(payload.pat);
+      return { ok: true, orgs: result.orgs, projects: result.projects };
+    }
+
+    case 'FETCH_PROJECT_FIELDS': {
+      const fields = await fetchProjectNumberFields(payload.pat, payload.projectId);
+      return { ok: true, fields };
     }
 
     default:

@@ -5,6 +5,7 @@
   const LOG_PREFIX = '[Takt]';
   let timerInterval = null;
   let currentSession = null;
+  let observer = null;
 
   function log(...args) {
     console.log(LOG_PREFIX, ...args);
@@ -142,6 +143,22 @@
       }
       .takt-sync-status--success { color: var(--fgColor-success, #1a7f37); background: var(--bgColor-success-muted, #dafbe1); }
       .takt-sync-status--error { color: var(--fgColor-danger, #d1242f); background: var(--bgColor-danger-muted, #ffebe9); }
+      .takt-time-input {
+        font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+        font-size: 12px;
+        font-variant-numeric: tabular-nums;
+        width: 72px;
+        padding: 2px 4px;
+        border: 1px solid var(--borderColor-accent-emphasis, #0969da);
+        border-radius: 4px;
+        background: var(--bgColor-default, #fff);
+        color: var(--fgColor-default, #1f2328);
+        outline: none;
+        text-align: center;
+      }
+      .takt-time-input:focus {
+        box-shadow: 0 0 0 2px rgba(9, 105, 218, 0.3);
+      }
     `;
     document.head.appendChild(style);
   }
@@ -215,10 +232,32 @@
     if (timerInterval) { clearInterval(timerInterval); timerInterval = null; }
   }
 
-  // --- Message sending ---
+  // --- Message sending (with context invalidation guard) ---
+
+  function isContextValid() {
+    try { return !!chrome.runtime?.id; } catch { return false; }
+  }
 
   function sendMessage(action, payload = {}) {
-    return chrome.runtime.sendMessage({ action, payload });
+    if (!isContextValid()) {
+      log('Extension context invalidated — reload the page');
+      cleanup();
+      return Promise.resolve(null);
+    }
+    return chrome.runtime.sendMessage({ action, payload }).catch((err) => {
+      if (err.message?.includes('Extension context invalidated')) {
+        log('Extension context invalidated — reload the page');
+        cleanup();
+      }
+      return null;
+    });
+  }
+
+  function cleanup() {
+    stopDisplayTimer();
+    observer?.disconnect();
+    const el = document.getElementById(CONTAINER_ID);
+    if (el) el.remove();
   }
 
   // --- Click handling ---
@@ -264,6 +303,92 @@
         });
         break;
     }
+  }
+
+  // --- Manual time edit (double-click) ---
+
+  function parseTimeString(str) {
+    // Accept HH:MM:SS, H:MM:SS, MM:SS, or just minutes as a number
+    str = str.trim();
+    const hms = str.match(/^(\d{1,2}):(\d{2}):(\d{2})$/);
+    if (hms) {
+      return (parseInt(hms[1]) * 3600 + parseInt(hms[2]) * 60 + parseInt(hms[3])) * 1000;
+    }
+    const ms = str.match(/^(\d{1,2}):(\d{2})$/);
+    if (ms) {
+      return (parseInt(ms[1]) * 60 + parseInt(ms[2])) * 1000;
+    }
+    const num = parseFloat(str);
+    if (!isNaN(num)) {
+      return num * 60 * 1000; // treat bare number as minutes
+    }
+    return null;
+  }
+
+  function showTimeEditor(container, issue) {
+    if (!currentSession) return;
+    const elapsed = computeElapsed(currentSession);
+    const btn = container.querySelector('.takt-btn');
+    if (!btn) return;
+
+    // Replace the button content with an input
+    const wasRunning = currentSession.status === 'running';
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.className = 'takt-time-input';
+    input.value = formatElapsed(elapsed);
+    input.placeholder = 'HH:MM:SS';
+    input.title = 'Enter time as HH:MM:SS, MM:SS, or minutes';
+
+    // Pause display updates while editing
+    stopDisplayTimer();
+
+    // Replace timer text with input
+    const timerEl = btn.querySelector('.takt-timer');
+    if (timerEl) {
+      timerEl.replaceWith(input);
+    } else {
+      btn.innerHTML = '';
+      btn.appendChild(input);
+    }
+
+    input.focus();
+    input.select();
+
+    let committed = false;
+    function commitEdit() {
+      if (committed) return;
+      committed = true;
+      const ms = parseTimeString(input.value);
+      if (ms !== null) {
+        sendMessage('SET_TIME', { ms }).then((resp) => {
+          if (resp?.ok) {
+            currentSession = resp.session;
+            log('Time manually set to', input.value, '=', ms, 'ms');
+          }
+          renderContainer(container, issue);
+          if (currentSession?.status === 'running') startDisplayTimer(container);
+        });
+      } else {
+        renderContainer(container, issue);
+        if (wasRunning) startDisplayTimer(container);
+      }
+    }
+
+    function cancelEdit() {
+      if (committed) return;
+      committed = true;
+      renderContainer(container, issue);
+      if (wasRunning) startDisplayTimer(container);
+    }
+
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); commitEdit(); }
+      if (e.key === 'Escape') { e.preventDefault(); cancelEdit(); }
+    });
+    input.addEventListener('blur', commitEdit);
+    // Prevent the click from triggering PAUSE/RESUME
+    input.addEventListener('click', (e) => e.stopPropagation());
   }
 
   function showSyncStatus(container, syncResult) {
@@ -343,10 +468,31 @@
     // Insert at the beginning of the actions area (before Edit button)
     anchor.prepend(container);
 
-    // Event delegation
+    // Event delegation — single click for actions, double-click to edit time
+    // Delay single-click to distinguish from double-click
+    let clickTimer = null;
     container.addEventListener('click', (e) => {
       const btn = e.target.closest('[data-action]');
-      if (btn) handleClick(container, issue, btn.dataset.action);
+      if (!btn) return;
+      // If there's an active session and the action is PAUSE/RESUME,
+      // delay to check for double-click
+      const action = btn.dataset.action;
+      if (currentSession && (action === 'PAUSE' || action === 'RESUME')) {
+        if (clickTimer) return; // already waiting
+        clickTimer = setTimeout(() => {
+          clickTimer = null;
+          handleClick(container, issue, action);
+        }, 250);
+      } else {
+        handleClick(container, issue, action);
+      }
+    });
+    container.addEventListener('dblclick', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      // Cancel the pending single-click
+      if (clickTimer) { clearTimeout(clickTimer); clickTimer = null; }
+      if (currentSession) showTimeEditor(container, issue);
     });
 
     // Get current state and render
@@ -371,7 +517,7 @@
     inject();
   }
 
-  const observer = new MutationObserver(() => {
+  observer = new MutationObserver(() => {
     const currentUrl = window.location.href;
     if (currentUrl !== lastUrl) {
       lastUrl = currentUrl;

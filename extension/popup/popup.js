@@ -177,6 +177,11 @@
     chrome.runtime.openOptionsPage();
   });
 
+  document.getElementById('mytime-link').addEventListener('click', (e) => {
+    e.preventDefault();
+    chrome.tabs.create({ url: chrome.runtime.getURL('mytime/mytime.html') });
+  });
+
   // --- Init ---
 
   init();

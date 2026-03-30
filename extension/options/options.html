@@ -13,57 +13,34 @@
       padding: 32px;
     }
     .container {
-      max-width: 480px;
+      max-width: 560px;
       margin: 0 auto;
       background: #fff;
       border: 1px solid #d1d9e0;
       border-radius: 12px;
       padding: 24px;
     }
-    h1 {
-      font-size: 20px;
-      font-weight: 600;
-      margin-bottom: 4px;
-    }
-    .subtitle {
-      font-size: 13px;
-      color: #656d76;
-      margin-bottom: 24px;
-    }
-    .field {
-      margin-bottom: 16px;
-    }
-    label {
-      display: block;
-      font-size: 13px;
-      font-weight: 600;
-      margin-bottom: 4px;
-    }
-    .hint {
-      font-size: 12px;
-      color: #656d76;
-      margin-bottom: 6px;
-    }
+    h1 { font-size: 20px; font-weight: 600; margin-bottom: 4px; }
+    .subtitle { font-size: 13px; color: #656d76; margin-bottom: 24px; }
+    .field { margin-bottom: 16px; }
+    label { display: block; font-size: 13px; font-weight: 600; margin-bottom: 4px; }
+    .hint { font-size: 12px; color: #656d76; margin-bottom: 6px; }
     input[type="password"],
-    input[type="text"] {
+    input[type="text"],
+    select {
       width: 100%;
       padding: 8px 12px;
       border: 1px solid #d1d9e0;
       border-radius: 6px;
       font-size: 13px;
-      font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+      font-family: inherit;
     }
-    input:focus {
+    input:focus, select:focus {
       outline: none;
       border-color: #0969da;
       box-shadow: 0 0 0 3px rgba(9, 105, 218, 0.15);
     }
-    .actions {
-      display: flex;
-      align-items: center;
-      gap: 12px;
-      margin-top: 20px;
-    }
+    .actions { display: flex; align-items: center; gap: 12px; margin-top: 20px; }
     .btn-save {
       padding: 8px 20px;
       background: #1f883d;
@@ -75,37 +52,114 @@
       cursor: pointer;
     }
     .btn-save:hover { background: #1a7f37; }
-    .btn-save:disabled {
-      opacity: 0.6;
-      cursor: not-allowed;
+    .btn-save:disabled { opacity: 0.6; cursor: not-allowed; }
+    .status { font-size: 13px; padding: 6px 10px; border-radius: 6px; }
+    .status--success { color: #1a7f37; background: #dafbe1; }
+    .status--error { color: #d1242f; background: #ffebe9; }
+    .status--loading { color: #656d76; }
+
+    /* Projects section */
+    .projects-section {
+      margin-top: 24px;
+      padding-top: 20px;
+      border-top: 1px solid #d1d9e0;
+      display: none;
     }
-    .status {
-      font-size: 13px;
-      padding: 6px 10px;
-      border-radius: 6px;
+    .projects-section.visible { display: block; }
+    .projects-section h2 {
+      font-size: 16px;
+      font-weight: 600;
+      margin-bottom: 4px;
     }
-    .status--success {
-      color: #1a7f37;
-      background: #dafbe1;
-    }
-    .status--error {
-      color: #d1242f;
-      background: #ffebe9;
-    }
-    .status--loading {
-      color: #656d76;
-    }
-    .scopes {
-      margin-top: 8px;
+    .projects-hint {
       font-size: 12px;
       color: #656d76;
+      margin-bottom: 16px;
     }
-    .scopes code {
-      background: #f6f8fa;
-      padding: 1px 4px;
-      border-radius: 3px;
-      font-size: 11px;
+    .project-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 0;
+      border-bottom: 1px solid #eaeef2;
     }
+    .project-row:last-child { border-bottom: none; }
+    .project-name {
+      flex: 1;
+      font-size: 13px;
+      font-weight: 500;
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .project-name svg {
+      vertical-align: text-bottom;
+      margin-right: 4px;
+      fill: #656d76;
+    }
+    .project-field-select {
+      width: 180px;
+      flex-shrink: 0;
+      padding: 6px 8px;
+      font-size: 12px;
+    }
+    .project-remove {
+      flex-shrink: 0;
+      padding: 4px;
+      border: none;
+      background: none;
+      color: #656d76;
+      cursor: pointer;
+      border-radius: 4px;
+      line-height: 1;
+    }
+    .project-remove:hover { color: #d1242f; background: #ffebe9; }
+    .project-row--removed {
+      opacity: 0.4;
+      text-decoration: line-through;
+    }
+    .project-row--removed .project-field-select { display: none; }
+    .project-row--removed .project-remove { display: none; }
+    .project-undo {
+      flex-shrink: 0;
+      font-size: 12px;
+      color: #0969da;
+      background: none;
+      border: none;
+      cursor: pointer;
+      padding: 4px 8px;
+    }
+    .project-undo:hover { text-decoration: underline; }
+    .default-field {
+      margin-bottom: 16px;
+    }
+    .btn-save-fields {
+      margin-top: 16px;
+      padding: 8px 20px;
+      background: #0969da;
+      color: #fff;
+      border: none;
+      border-radius: 6px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    .btn-save-fields:hover { background: #0860ca; }
+    .btn-save-fields:disabled { opacity: 0.6; cursor: not-allowed; }
+    .fields-status { font-size: 13px; margin-left: 12px; }
+    .spinner {
+      display: inline-block;
+      width: 14px;
+      height: 14px;
+      border: 2px solid #d1d9e0;
+      border-top-color: #0969da;
+      border-radius: 50%;
+      animation: spin 0.6s linear infinite;
+      vertical-align: middle;
+      margin-right: 6px;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
   </style>
 </head>
 <body>
@@ -114,29 +168,36 @@
     <p class="subtitle">Connect your GitHub account to sync tracked time to Projects.</p>
 
     <div class="field">
-      <label for="pat">Personal Access Token</label>
+      <label for="pat">Personal Access Token (classic)</label>
       <div class="hint">
-        Create a <a href="https://github.com/settings/tokens" target="_blank">classic PAT</a>
-        with <code>repo</code> and <code>project</code> scopes.
+        <a href="https://github.com/settings/tokens/new?scopes=repo,project&description=Takt%20time%20tracker" target="_blank">Create a classic PAT</a>
+        with <code>repo</code> and <code>project</code> scopes.<br>
+        <span style="color: #9a6700;">Note:</span> GitHub Projects v2 requires a classic PAT — fine-grained tokens
+        don't yet support project field mutations.
       </div>
       <input type="password" id="pat" placeholder="ghp_xxxxxxxxxxxxxxxxxxxx" autocomplete="off">
     </div>
 
-    <div class="field">
-      <label for="org">Organization</label>
-      <div class="hint">Used to scope project resolution (e.g. <code>alive-industries</code>).</div>
-      <input type="text" id="org" placeholder="alive-industries">
-    </div>
-
-    <div class="field">
-      <label for="field-name">Project Field Name</label>
-      <div class="hint">The number field on your GitHub Project that stores tracked minutes.</div>
-      <input type="text" id="field-name" value="Tracked Time (mins)">
-    </div>
-
     <div class="actions">
-      <button class="btn-save" id="btn-save">Save &amp; Validate</button>
+      <button class="btn-save" id="btn-validate">Connect & Fetch Projects</button>
       <span id="status"></span>
+    </div>
+
+    <div class="projects-section" id="projects-section">
+      <h2>Project Field Mapping</h2>
+      <p class="projects-hint">Choose which Number field Takt writes tracked time to on each project. "Use default" falls back to the default field below.</p>
+
+      <div class="default-field">
+        <label for="default-field">Default time field</label>
+        <select id="default-field"></select>
+      </div>
+
+      <div id="projects-list"></div>
+
+      <div style="display: flex; align-items: center; margin-top: 16px;">
+        <button class="btn-save-fields" id="btn-save-fields">Save Field Settings</button>
+        <span id="fields-status" class="fields-status"></span>
+      </div>
     </div>
   </div>
 
