@@ -142,6 +142,7 @@
         margin-left: 4px;
       }
       .takt-sync-status--success { color: var(--fgColor-success, #1a7f37); background: var(--bgColor-success-muted, #dafbe1); }
+      .takt-sync-status--warning { color: var(--fgColor-attention, #9a6700); background: var(--bgColor-attention-muted, #fff8c5); }
       .takt-sync-status--error { color: var(--fgColor-danger, #d1242f); background: var(--bgColor-danger-muted, #ffebe9); }
       .takt-time-input {
         font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
@@ -393,15 +394,45 @@
 
   function showSyncStatus(container, syncResult) {
     if (!syncResult) return;
+
+    let text, variant, dismissMs;
+
+    if (syncResult.error) {
+      text = `Sync failed: ${syncResult.error}. Time saved to My Time.`;
+      variant = 'error';
+      dismissMs = 8000;
+    } else if (syncResult.skipped) {
+      if (syncResult.reason?.includes('No PAT')) {
+        text = 'Time saved locally. Connect GitHub in Settings to sync.';
+      } else if (syncResult.reason?.includes('not linked')) {
+        text = "Time saved to My Time. Issue isn't linked to a GitHub Project.";
+      } else {
+        text = `Time saved to My Time. ${syncResult.reason || ''}`;
+      }
+      variant = 'warning';
+      dismissMs = 8000;
+    } else if (syncResult.synced && syncResult.results?.length) {
+      const synced = syncResult.results.filter((r) => r.synced);
+      const skipped = syncResult.results.filter((r) => r.skipped);
+      const names = synced.map((r) => r.project).join(', ');
+      text = synced.length ? `Synced to ${names}` : '';
+      if (skipped.length) {
+        const reasons = skipped.map((r) => `${r.project}: ${r.reason}`).join('; ');
+        text += text ? `. Skipped: ${reasons}` : `Skipped: ${reasons}`;
+      }
+      variant = skipped.length && !synced.length ? 'warning' : 'success';
+      dismissMs = 5000;
+    } else {
+      text = 'Time saved to My Time.';
+      variant = 'success';
+      dismissMs = 5000;
+    }
+
     const statusDiv = document.createElement('span');
-    statusDiv.className = syncResult.error
-      ? 'takt-sync-status takt-sync-status--error'
-      : 'takt-sync-status takt-sync-status--success';
-    statusDiv.textContent = syncResult.error
-      ? `Sync failed: ${syncResult.error}`
-      : 'Synced';
+    statusDiv.className = `takt-sync-status takt-sync-status--${variant}`;
+    statusDiv.textContent = text;
     container.appendChild(statusDiv);
-    setTimeout(() => statusDiv.remove(), 5000);
+    setTimeout(() => statusDiv.remove(), dismissMs);
   }
 
   // --- Header anchor selectors ---

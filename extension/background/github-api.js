@@ -167,6 +167,27 @@ async function updateTrackedTime(pat, projectId, itemId, fieldId, totalMinutes) 
   );
 }
 
+// --- Issue comment ---
+
+export async function postTimeComment(pat, owner, repo, issueNumber, durationHours, username) {
+  const body = `Tracked **${durationHours} hours** on this issue — @${username} via Takt`;
+  const resp = await fetch(
+    `https://api.github.com/repos/${owner}/${repo}/issues/${issueNumber}/comments`,
+    {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${pat}`,
+        Accept: 'application/vnd.github+json',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ body }),
+    }
+  );
+  if (!resp.ok) {
+    throw new Error(`Comment failed: ${resp.status} ${resp.statusText}`);
+  }
+}
+
 // --- Main sync function ---
 
 export async function syncToGitHub(completedSession) {

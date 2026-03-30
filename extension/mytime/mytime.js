@@ -91,8 +91,8 @@
         return `
           <tr data-index="${originalIndex}">
             <td class="muted">${formatDate(s.completedAt)}</td>
-            <td>${escapeHtml(s.repo)}</td>
-            <td>#${s.issueNumber} ${escapeHtml(s.issueTitle || '')}</td>
+            <td><a href="https://github.com/${escapeHtml(s.repo)}" target="_blank">${escapeHtml(s.repo)}</a></td>
+            <td><a href="https://github.com/${escapeHtml(s.repo)}/issues/${s.issueNumber}" target="_blank">#${s.issueNumber} ${escapeHtml(s.issueTitle || '')}</a></td>
             <td class="mono">${formatDuration(s.durationMs)}</td>
             <td class="mono">${toHours(s.durationMs).toFixed(2)}</td>
             <td class="td-actions">
@@ -120,76 +120,39 @@
     }
   }
 
-  // --- Export .xlsx ---
+  // --- Export CSV ---
 
-  function exportXlsx() {
+  function exportCsv() {
     const sessions = getFiltered();
     if (sessions.length === 0) return;
 
-    // Build XLSX using the simple XML spreadsheet format (Excel-compatible)
+    const escCsv = (v) => {
+      const s = String(v);
+      return s.includes(',') || s.includes('"') || s.includes('\n')
+        ? `"${s.replace(/"/g, '""')}"` : s;
+    };
+
+    const headers = ['Date', 'Repo', 'Issue #', 'Issue Title', 'Duration', 'Hours'];
     const rows = sessions.map((s) => [
       formatDateISO(s.completedAt),
       s.repo,
       s.issueNumber,
       s.issueTitle || '',
       formatDuration(s.durationMs),
-      toHours(s.durationMs),
+      toHours(s.durationMs).toFixed(2),
     ]);
 
-    const totalHours = rows.reduce((sum, r) => sum + r[5], 0);
+    const totalHours = sessions.reduce((sum, s) => sum + toHours(s.durationMs), 0);
+    rows.push(['Total', '', '', '', '', totalHours.toFixed(2)]);
 
-    const escXml = (v) => String(v).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    const csv = [headers, ...rows].map((r) => r.map(escCsv).join(',')).join('\n');
 
-    let xml = '<?xml version="1.0"?>\n';
-    xml += '<?mso-application progid="Excel.Sheet"?>\n';
-    xml += '<Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet"\n';
-    xml += ' xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet">\n';
-    xml += '<Styles>\n';
-    xml += '  <Style ss:ID="Header"><Font ss:Bold="1"/><Interior ss:Color="#F6F8FA" ss:Pattern="Solid"/></Style>\n';
-    xml += '  <Style ss:ID="Num"><NumberFormat ss:Format="0.00"/></Style>\n';
-    xml += '  <Style ss:ID="Bold"><Font ss:Bold="1"/></Style>\n';
-    xml += '</Styles>\n';
-    xml += '<Worksheet ss:Name="Time Log">\n';
-    xml += '<Table>\n';
-
-    // Column widths
-    xml += '<Column ss:Width="85"/><Column ss:Width="160"/><Column ss:Width="55"/><Column ss:Width="200"/><Column ss:Width="80"/><Column ss:Width="65"/>\n';
-
-    // Header
-    xml += '<Row ss:StyleID="Header">\n';
-    ['Date', 'Repo', 'Issue #', 'Issue Title', 'Duration', 'Hours'].forEach((h) => {
-      xml += `  <Cell><Data ss:Type="String">${escXml(h)}</Data></Cell>\n`;
-    });
-    xml += '</Row>\n';
-
-    // Data rows
-    for (const row of rows) {
-      xml += '<Row>\n';
-      xml += `  <Cell><Data ss:Type="String">${escXml(row[0])}</Data></Cell>\n`;
-      xml += `  <Cell><Data ss:Type="String">${escXml(row[1])}</Data></Cell>\n`;
-      xml += `  <Cell><Data ss:Type="Number">${row[2]}</Data></Cell>\n`;
-      xml += `  <Cell><Data ss:Type="String">${escXml(row[3])}</Data></Cell>\n`;
-      xml += `  <Cell><Data ss:Type="String">${escXml(row[4])}</Data></Cell>\n`;
-      xml += `  <Cell ss:StyleID="Num"><Data ss:Type="Number">${row[5]}</Data></Cell>\n`;
-      xml += '</Row>\n';
-    }
-
-    // Total row
-    xml += '<Row>\n';
-    xml += '  <Cell ss:StyleID="Bold"><Data ss:Type="String">Total</Data></Cell>\n';
-    xml += '  <Cell/><Cell/><Cell/><Cell/>\n';
-    xml += `  <Cell ss:StyleID="Bold"><Data ss:Type="Number">${Math.round(totalHours * 100) / 100}</Data></Cell>\n`;
-    xml += '</Row>\n';
-
-    xml += '</Table>\n</Worksheet>\n</Workbook>';
-
-    // Download
-    const blob = new Blob([xml], { type: 'application/vnd.ms-excel' });
+    // BOM for Excel UTF-8 compatibility
+    const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    const dateStr = new Date().toISOString().slice(0, 10);
-    a.download = `takt-time-log-${dateStr}.xlsx`;
+    a.download = `takt-time-log-${new Date().toISOString().slice(0, 10)}.csv`;
     a.click();
     URL.revokeObjectURL(url);
   }
@@ -218,7 +181,7 @@
   filterRepo.addEventListener('change', render);
   filterFrom.addEventListener('change', render);
   filterTo.addEventListener('change', render);
-  btnExport.addEventListener('click', exportXlsx);
+  btnExport.addEventListener('click', exportCsv);
 
   init();
 })();

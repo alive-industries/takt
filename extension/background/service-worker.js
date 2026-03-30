@@ -1,4 +1,4 @@
-import { syncToGitHub, fetchAllProjects, fetchProjectNumberFields } from './github-api.js';
+import { syncToGitHub, postTimeComment, fetchAllProjects, fetchProjectNumberFields } from './github-api.js';
 
 const ALARM_NAME = 'takt-tick';
 const MAX_COMPLETED = 50;
@@ -152,7 +152,7 @@ async function handleMessage({ action, payload }) {
       await pushCompleted(completed, completedSessions);
       clearAlarm();
 
-      // Attempt GitHub sync (non-blocking for the response)
+      // Attempt GitHub sync
       let syncResult = null;
       try {
         syncResult = await syncToGitHub(completed);
@@ -160,7 +160,38 @@ async function handleMessage({ action, payload }) {
         syncResult = { error: err.message };
       }
 
-      return { ok: true, completed, syncResult };
+      // Post comment on the issue
+      let commentResult = null;
+      try {
+        const { settings } = await chrome.storage.local.get('settings');
+        if (settings?.pat) {
+          // Resolve username — fetch if not cached
+          let username = settings.username;
+          if (!username) {
+            const resp = await fetch('https://api.github.com/user', {
+              headers: { Authorization: `Bearer ${settings.pat}`, Accept: 'application/vnd.github+json' },
+            });
+            if (resp.ok) {
+              const user = await resp.json();
+              username = user.login;
+              await chrome.storage.local.set({ settings: { ...settings, username } });
+            }
+          }
+          if (username) {
+            const [owner, repo] = completed.repo.split('/');
+            const durationHours = Math.round((completed.durationMs / 3600000) * 4) / 4;
+            await postTimeComment(
+              settings.pat, owner, repo, completed.issueNumber,
+              durationHours, username
+            );
+            commentResult = { ok: true };
+          }
+        }
+      } catch (err) {
+        commentResult = { error: err.message };
+      }
+
+      return { ok: true, completed, syncResult, commentResult };
     }
 
     case 'GET_STATE': {

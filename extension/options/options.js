@@ -65,9 +65,9 @@
 
       const user = await resp.json();
 
-      // Save PAT immediately
+      // Save PAT + username immediately
       const { settings: existing } = await chrome.storage.local.get('settings');
-      await chrome.storage.local.set({ settings: { ...existing, pat } });
+      await chrome.storage.local.set({ settings: { ...existing, pat, username: user.login } });
 
       showStatus(statusEl, `Connected as ${user.login}. Fetching orgs & projects...`, 'loading');
 
