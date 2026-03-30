@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      width: 320px;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", Helvetica, Arial, sans-serif;
+      font-size: 13px;
+      color: #1f2328;
+      background: #fff;
+    }
+    .header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 12px 16px;
+      border-bottom: 1px solid #d1d9e0;
+      font-size: 14px;
+      font-weight: 600;
+    }
+    .header svg { fill: #656d76; }
+
+    /* Active session */
+    .active { padding: 12px 16px; }
+    .active-empty {
+      padding: 12px 16px;
+      color: #656d76;
+      font-size: 12px;
+    }
+    .active-repo {
+      font-size: 11px;
+      color: #656d76;
+      margin-bottom: 2px;
+    }
+    .active-issue {
+      font-weight: 600;
+      margin-bottom: 8px;
+    }
+    .active-timer {
+      font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+      font-size: 24px;
+      font-variant-numeric: tabular-nums;
+      margin-bottom: 8px;
+    }
+    .active-timer--running { color: #0969da; }
+    .active-timer--paused { color: #9a6700; }
+    .active-controls {
+      display: flex;
+      gap: 8px;
+    }
+    .btn {
+      flex: 1;
+      padding: 6px 12px;
+      border: 1px solid #d1d9e0;
+      border-radius: 6px;
+      background: #f6f8fa;
+      font-size: 12px;
+      cursor: pointer;
+      text-align: center;
+    }
+    .btn:hover { background: #eaeef2; }
+    .btn--danger {
+      border-color: #cf222e;
+      color: #d1242f;
+    }
+    .btn--danger:hover { background: #ffebe9; }
+    .btn--primary {
+      border-color: #0969da;
+      color: #0969da;
+    }
+    .btn--primary:hover { background: #ddf4ff; }
+
+    /* Recent sessions */
+    .section-title {
+      padding: 8px 16px 4px;
+      font-size: 11px;
+      font-weight: 600;
+      color: #656d76;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      border-top: 1px solid #d1d9e0;
+    }
+    .sessions { list-style: none; }
+    .sessions li {
+      padding: 6px 16px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 12px;
+    }
+    .sessions li:hover { background: #f6f8fa; }
+    .session-ref { color: #656d76; }
+    .session-duration {
+      font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+      color: #1f2328;
+    }
+
+    /* Footer */
+    .footer {
+      padding: 8px 16px;
+      border-top: 1px solid #d1d9e0;
+      text-align: right;
+    }
+    .footer a {
+      font-size: 11px;
+      color: #0969da;
+      text-decoration: none;
+    }
+    .footer a:hover { text-decoration: underline; }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <svg width="16" height="16" viewBox="0 0 16 16">
+      <path d="M8 0a8 8 0 110 16A8 8 0 018 0zm0 1.5a6.5 6.5 0 100 13 6.5 6.5 0 000-13zM8 3a.75.75 0 01.75.75v3.69l2.28 2.28a.75.75 0 01-1.06 1.06l-2.5-2.5A.75.75 0 017.25 8V3.75A.75.75 0 018 3z"/>
+    </svg>
+    Takt
+  </div>
+
+  <div id="active-section"></div>
+
+  <div class="section-title">Recent</div>
+  <ul id="sessions-list" class="sessions"></ul>
+
+  <div class="footer">
+    <a href="#" id="options-link">Settings</a>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>

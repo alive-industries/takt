@@ -1,0 +1,39 @@
+{
+  "manifest_version": 3,
+  "name": "Takt",
+  "version": "0.1.0",
+  "description": "GitHub-native time tracker. Track time directly on issues and sync to GitHub Projects.",
+  "permissions": ["storage", "alarms"],
+  "host_permissions": ["https://api.github.com/*"],
+  "background": {
+    "service_worker": "background/service-worker.js",
+    "type": "module"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://github.com/*/*/issues/*",
+        "https://github.com/orgs/*/projects/*"
+      ],
+      "js": ["content/github.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "action": {
+    "default_popup": "popup/popup.html",
+    "default_icon": {
+      "16": "assets/icons/icon-16.png",
+      "48": "assets/icons/icon-48.png",
+      "128": "assets/icons/icon-128.png"
+    }
+  },
+  "options_ui": {
+    "page": "options/options.html",
+    "open_in_tab": true
+  },
+  "icons": {
+    "16": "assets/icons/icon-16.png",
+    "48": "assets/icons/icon-48.png",
+    "128": "assets/icons/icon-128.png"
+  }
+}

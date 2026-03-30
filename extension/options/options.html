@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Takt Settings</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", Helvetica, Arial, sans-serif;
+      font-size: 14px;
+      color: #1f2328;
+      background: #f6f8fa;
+      padding: 32px;
+    }
+    .container {
+      max-width: 480px;
+      margin: 0 auto;
+      background: #fff;
+      border: 1px solid #d1d9e0;
+      border-radius: 12px;
+      padding: 24px;
+    }
+    h1 {
+      font-size: 20px;
+      font-weight: 600;
+      margin-bottom: 4px;
+    }
+    .subtitle {
+      font-size: 13px;
+      color: #656d76;
+      margin-bottom: 24px;
+    }
+    .field {
+      margin-bottom: 16px;
+    }
+    label {
+      display: block;
+      font-size: 13px;
+      font-weight: 600;
+      margin-bottom: 4px;
+    }
+    .hint {
+      font-size: 12px;
+      color: #656d76;
+      margin-bottom: 6px;
+    }
+    input[type="password"],
+    input[type="text"] {
+      width: 100%;
+      padding: 8px 12px;
+      border: 1px solid #d1d9e0;
+      border-radius: 6px;
+      font-size: 13px;
+      font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+    }
+    input:focus {
+      outline: none;
+      border-color: #0969da;
+      box-shadow: 0 0 0 3px rgba(9, 105, 218, 0.15);
+    }
+    .actions {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-top: 20px;
+    }
+    .btn-save {
+      padding: 8px 20px;
+      background: #1f883d;
+      color: #fff;
+      border: none;
+      border-radius: 6px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    .btn-save:hover { background: #1a7f37; }
+    .btn-save:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+    }
+    .status {
+      font-size: 13px;
+      padding: 6px 10px;
+      border-radius: 6px;
+    }
+    .status--success {
+      color: #1a7f37;
+      background: #dafbe1;
+    }
+    .status--error {
+      color: #d1242f;
+      background: #ffebe9;
+    }
+    .status--loading {
+      color: #656d76;
+    }
+    .scopes {
+      margin-top: 8px;
+      font-size: 12px;
+      color: #656d76;
+    }
+    .scopes code {
+      background: #f6f8fa;
+      padding: 1px 4px;
+      border-radius: 3px;
+      font-size: 11px;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Takt Settings</h1>
+    <p class="subtitle">Connect your GitHub account to sync tracked time to Projects.</p>
+
+    <div class="field">
+      <label for="pat">Personal Access Token</label>
+      <div class="hint">
+        Create a <a href="https://github.com/settings/tokens" target="_blank">classic PAT</a>
+        with <code>repo</code> and <code>project</code> scopes.
+      </div>
+      <input type="password" id="pat" placeholder="ghp_xxxxxxxxxxxxxxxxxxxx" autocomplete="off">
+    </div>
+
+    <div class="field">
+      <label for="org">Organization</label>
+      <div class="hint">Used to scope project resolution (e.g. <code>alive-industries</code>).</div>
+      <input type="text" id="org" placeholder="alive-industries">
+    </div>
+
+    <div class="field">
+      <label for="field-name">Project Field Name</label>
+      <div class="hint">The number field on your GitHub Project that stores tracked minutes.</div>
+      <input type="text" id="field-name" value="Tracked Time (mins)">
+    </div>
+
+    <div class="actions">
+      <button class="btn-save" id="btn-save">Save &amp; Validate</button>
+      <span id="status"></span>
+    </div>
+  </div>
+
+  <script src="options.js"></script>
+</body>
+</html>
