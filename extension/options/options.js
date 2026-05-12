@@ -3,6 +3,7 @@
 
   const patInput = document.getElementById('pat');
   const backendUrlInput = document.getElementById('backend-url');
+  const apiKeyInput = document.getElementById('api-key');
   const backendStatusPip = document.getElementById('backend-status-pip');
   const btnValidate = document.getElementById('btn-validate');
   const btnBackfill = document.getElementById('btn-backfill');
@@ -30,17 +31,30 @@
     if (settings) {
       patInput.value = settings.pat || '';
       backendUrlInput.value = settings.backendUrl || 'http://localhost:8000';
+      apiKeyInput.value = settings.apiKey || '';
     } else {
       backendUrlInput.value = 'http://localhost:8000';
     }
     refreshBackendStatus();
   });
 
-  // Persist backend URL on blur so the ping reflects the latest value.
-  backendUrlInput.addEventListener('blur', async () => {
+  // Save both backend URL and API key together. Avoids the race where blur
+  // doesn't fire (e.g. paste then click another tab) and gives the user
+  // explicit confirmation that the values were stored.
+  const btnSaveBackend = document.getElementById('btn-save-backend');
+  const backendSaveStatus = document.getElementById('backend-save-status');
+  btnSaveBackend.addEventListener('click', async () => {
+    btnSaveBackend.disabled = true;
+    showStatus(backendSaveStatus, 'saving…', 'loading');
     const url = backendUrlInput.value.trim().replace(/\/+$/, '');
+    const apiKey = apiKeyInput.value.trim();
     const { settings: existing } = await chrome.storage.local.get('settings');
-    await chrome.storage.local.set({ settings: { ...existing, backendUrl: url } });
+    await chrome.storage.local.set({
+      settings: { ...existing, backendUrl: url, apiKey },
+    });
+    showStatus(backendSaveStatus, 'Saved', 'success');
+    setTimeout(() => showStatus(backendSaveStatus, '', ''), 2500);
+    btnSaveBackend.disabled = false;
     refreshBackendStatus();
   });
 

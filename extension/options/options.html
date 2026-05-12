@@ -187,6 +187,19 @@
       <input type="text" id="backend-url" placeholder="http://localhost:8000" autocomplete="off">
     </div>
 
+    <div class="field">
+      <label for="api-key">Takt API key</label>
+      <div class="hint">
+        Shared key required by deployed backends. Leave blank for local dev.
+      </div>
+      <input type="password" id="api-key" placeholder="optional for localhost" autocomplete="off">
+    </div>
+
+    <div class="actions" style="margin-top: -8px; margin-bottom: 16px;">
+      <button class="btn-save" id="btn-save-backend" style="background:#0969da;">Save backend settings</button>
+      <span id="backend-save-status"></span>
+    </div>
+
     <div class="field" id="admin-link-field" style="display:none;">
       <a href="#" id="admin-link" style="color:#0969da;font-weight:600;">Open Admin (members &amp; org config) &rarr;</a>
     </div>

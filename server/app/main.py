@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import hmac
 import logging
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from app.config import get_settings
 from app.routes import admin, me, sessions
@@ -49,8 +51,44 @@ def create_app() -> FastAPI:
         allow_origin_regex=r"chrome-extension://.*",
         allow_credentials=False,
         allow_methods=["*"],
-        allow_headers=["Authorization", "Content-Type"],
+        allow_headers=["Authorization", "Content-Type", "X-Takt-Api-Key"],
     )
+
+    # API-key gate. Sits in front of every /v1/* route. /health, /openapi,
+    # /docs are deliberately exempt so deploy probes and schema viewers work.
+    @app.middleware("http")
+    async def api_key_gate(request: Request, call_next):
+        s = get_settings()
+        if not s.api_key:
+            # No key configured — open mode (local dev). PAT auth still
+            # applies on every protected route.
+            return await call_next(request)
+
+        path = request.url.path
+        # Allow CORS preflight, health checks, and OpenAPI introspection
+        # through unauthenticated.
+        if request.method == "OPTIONS" or path in (
+            "/health", "/openapi.json", "/docs", "/redoc", "/docs/oauth2-redirect"
+        ):
+            return await call_next(request)
+
+        # Strip whitespace on both sides — Secret Manager values that were
+        # piped via `echo` end up with a trailing newline that breaks
+        # constant-time compare. Belt-and-braces; we also recommend
+        # `printf` (no newline) when seeding the secret.
+        provided = request.headers.get("x-takt-api-key", "").strip()
+        expected = s.api_key.strip()
+        if not hmac.compare_digest(provided, expected):
+            return JSONResponse(
+                status_code=401,
+                content={
+                    "detail": {
+                        "code": "invalid_api_key",
+                        "message": "Missing or invalid X-Takt-Api-Key header.",
+                    }
+                },
+            )
+        return await call_next(request)
 
     app.include_router(me.router)
     app.include_router(sessions.router)

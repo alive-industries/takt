@@ -1,5 +1,7 @@
 """Smoke tests — they don't touch BigQuery. Real integration tests come later."""
 
+import importlib
+
 from fastapi.testclient import TestClient
 
 from app.main import app
@@ -102,3 +104,37 @@ def test_org_config_update_rejects_unknown_fields() -> None:
             json={"default_field_naem": "Hours"},  # typo
         )
         assert resp.status_code in (401, 422)
+
+
+def test_api_key_gate(monkeypatch) -> None:
+    """When TAKT_API_KEY is set, /v1/* requires a matching X-Takt-Api-Key."""
+    import app.config as config_module
+    import app.main as main_module
+
+    monkeypatch.setenv("TAKT_API_KEY", "shh-secret")
+    config_module.get_settings.cache_clear()
+    importlib.reload(main_module)
+
+    with TestClient(main_module.app) as client:
+        # Health remains open
+        assert client.get("/health").status_code == 200
+
+        # Missing key → 401
+        resp = client.get("/v1/me")
+        assert resp.status_code == 401
+        assert resp.json()["detail"]["code"] == "invalid_api_key"
+
+        # Wrong key → 401
+        resp = client.get("/v1/me", headers={"X-Takt-Api-Key": "wrong"})
+        assert resp.status_code == 401
+        assert resp.json()["detail"]["code"] == "invalid_api_key"
+
+        # Right key → falls through to PAT auth (no PAT → invalid_pat)
+        resp = client.get("/v1/me", headers={"X-Takt-Api-Key": "shh-secret"})
+        assert resp.status_code == 401
+        assert resp.json()["detail"]["code"] == "invalid_pat"
+
+    # Reset for other tests
+    monkeypatch.delenv("TAKT_API_KEY", raising=False)
+    config_module.get_settings.cache_clear()
+    importlib.reload(main_module)

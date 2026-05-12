@@ -32,6 +32,9 @@ class Settings(BaseSettings):
 
     # Server
     log_level: str = Field(default="INFO")
+    # Shared API key. When set, all /v1/* requests must carry a matching
+    # `X-Takt-Api-Key` header. Unset (empty) disables the gate (local dev).
+    api_key: str = Field(default="")
     cors_origins: list[str] = Field(
         default_factory=lambda: [
             "chrome-extension://*",  # placeholder; CORS for extensions handled differently

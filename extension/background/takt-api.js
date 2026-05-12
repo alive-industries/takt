@@ -10,7 +10,11 @@ const DEFAULT_BACKEND_URL = 'http://localhost:8000';
 export async function getBackendConfig() {
   const { settings } = await chrome.storage.local.get('settings');
   const backendUrl = (settings?.backendUrl || DEFAULT_BACKEND_URL).replace(/\/+$/, '');
-  return { backendUrl, pat: settings?.pat || null };
+  return {
+    backendUrl,
+    pat: settings?.pat || null,
+    apiKey: settings?.apiKey || null,
+  };
 }
 
 class TaktApiError extends Error {
@@ -22,13 +26,14 @@ class TaktApiError extends Error {
 }
 
 async function request(method, path, { body, signal } = {}) {
-  const { backendUrl, pat } = await getBackendConfig();
+  const { backendUrl, pat, apiKey } = await getBackendConfig();
   if (!pat) throw new TaktApiError(0, 'no_pat', 'No PAT configured');
 
   const resp = await fetch(`${backendUrl}${path}`, {
     method,
     headers: {
       Authorization: `Bearer ${pat}`,
+      ...(apiKey ? { 'X-Takt-Api-Key': apiKey } : {}),
       ...(body ? { 'Content-Type': 'application/json' } : {}),
     },
     body: body ? JSON.stringify(body) : undefined,

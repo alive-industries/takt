@@ -6,6 +6,7 @@
   "permissions": ["storage", "alarms"],
   "host_permissions": [
     "https://api.github.com/*",
+    "https://*.run.app/*",
     "http://localhost/*",
     "http://127.0.0.1/*"
   ],

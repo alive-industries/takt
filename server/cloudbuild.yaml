@@ -15,6 +15,8 @@ substitutions:
   _GITHUB_ORG: alive-industries
   _BQ_LOCATION: EU
   _BQ_DATASET: takt
+  # Secret Manager secret name (latest version) injected as TAKT_API_KEY.
+  _API_KEY_SECRET: takt-api-key
 
 options:
   logging: CLOUD_LOGGING_ONLY
@@ -24,10 +26,12 @@ steps:
   - id: build
     name: gcr.io/cloud-builders/docker
     dir: server
+    env:
+      - DOCKER_BUILDKIT=1
     args:
       - build
       - -t
-      - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPO}/${_SERVICE}:$SHORT_SHA
+      - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPO}/${_SERVICE}:${BUILD_ID}
       - -t
       - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPO}/${_SERVICE}:latest
       - .
@@ -43,12 +47,13 @@ steps:
       - run
       - deploy
       - ${_SERVICE}
-      - --image=${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPO}/${_SERVICE}:$SHORT_SHA
+      - --image=${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPO}/${_SERVICE}:${BUILD_ID}
       - --region=${_REGION}
       - --platform=managed
       - --service-account=${_SA}
       - --allow-unauthenticated
       - --set-env-vars=TAKT_GCP_PROJECT=$PROJECT_ID,TAKT_BQ_DATASET=${_BQ_DATASET},TAKT_BQ_LOCATION=${_BQ_LOCATION},TAKT_GITHUB_ORG=${_GITHUB_ORG}
+      - --set-secrets=TAKT_API_KEY=${_API_KEY_SECRET}:latest
       - --max-instances=10
       - --concurrency=40
       - --cpu=1
