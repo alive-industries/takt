@@ -395,17 +395,25 @@ async function handleMessage({ action, payload }) {
     }
 
     case 'LIST_BACKEND_SESSIONS': {
-      // Pulls from the backend AND reconciles the cache for the queried
-      // window. Caller (My Time) typically calls LIST_LOCAL_SESSIONS first
-      // for instant render and this in the background to refresh.
+      // Pulls from the backend AND (by default) reconciles the cache for
+      // the queried window. Caller (My Time) typically calls
+      // LIST_LOCAL_SESSIONS first for instant render and this in the
+      // background to refresh.
+      //
+      // `skipReconcile: true` is used when the caller is querying a window
+      // older than the cache's 30-day retention — reconciling would write
+      // those rows in then immediately prune them on save.
       try {
-        const sessions = await listBackendSessions(payload || {});
+        const { skipReconcile, ...apiParams } = payload || {};
+        const sessions = await listBackendSessions(apiParams);
         const records = sessions.map(cache.fromBackendSession);
-        await cache.reconcileWindow({
-          from: payload?.from,
-          to: payload?.to,
-          records,
-        });
+        if (!skipReconcile) {
+          await cache.reconcileWindow({
+            from: apiParams.from,
+            to: apiParams.to,
+            records,
+          });
+        }
         return { ok: true, sessions, records };
       } catch (err) {
         return { ok: false, error: { code: err.code, message: err.message, status: err.status } };

@@ -137,11 +137,17 @@
   // Background revalidate: tell the SW to fetch from the backend and
   // reconcile. After it finishes we re-read from cache (which now reflects
   // the merged state) and re-render.
-  async function revalidateFromBackend() {
+  //
+  // When `outOfCache` is true the requested window extends beyond the local
+  // cache's 30-day retention. In that case the SW's reconcileWindow would
+  // immediately prune the older rows it just fetched, so we render directly
+  // from the response payload instead of going through the cache.
+  async function revalidateFromBackend({ outOfCache = false } = {}) {
     const { from, to } = activeRange();
     const params = {
       from: `${from}T00:00:00Z`,
       to: `${to}T23:59:59Z`,
+      skipReconcile: outOfCache,
     };
     const resp = await sendMessage('LIST_BACKEND_SESSIONS', params);
     if (!resp?.ok) {
@@ -151,8 +157,15 @@
       setSourcePip('error', `offline (${code})`);
       return false;
     }
-    // Re-pull from cache so we pick up the reconciled set, then re-render.
-    await loadFromCache();
+    if (outOfCache) {
+      // Use the response records directly — they're already normalised by
+      // the SW (cache.fromBackendSession). The recent-cache subset would
+      // re-prune them on save.
+      allSessions = resp.records || [];
+    } else {
+      // Re-pull from cache so we pick up the reconciled set, then re-render.
+      await loadFromCache();
+    }
     populateFilters();
     render();
     setSourcePip('backend', `${allSessions.length} synced`);
@@ -388,9 +401,11 @@
       // 2) Background revalidate. Re-renders silently when done.
       revalidateFromBackend();
     } else {
-      // Range is older than cache retention — go straight to backend.
+      // Range is older than cache retention — go straight to backend and
+      // render the response directly (bypassing the cache, which would
+      // prune anything outside the 30-day window on the next save).
       setSourcePip('backend', 'fetching from BigQuery…');
-      const ok = await revalidateFromBackend();
+      const ok = await revalidateFromBackend({ outOfCache: true });
       if (!ok) {
         // Even fallback empty: still render cache so user sees what we have.
         await loadFromCache();
