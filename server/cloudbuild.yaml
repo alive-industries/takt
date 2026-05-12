@@ -1,0 +1,59 @@
+# Cloud Build pipeline for Takt API.
+# Trigger: push to main, path filter `server/**`.
+#
+# Substitutions:
+#   _REGION         e.g. europe-west1 (match your BQ location)
+#   _SERVICE        cloud run service name (default: takt-api)
+#   _AR_REPO        artifact registry repo name (default: takt)
+#   _SA             runtime service account email
+
+substitutions:
+  _REGION: europe-west1
+  _SERVICE: takt-api
+  _AR_REPO: takt
+  _SA: takt-api@cost-tracker-490815.iam.gserviceaccount.com
+  _GITHUB_ORG: alive-industries
+  _BQ_LOCATION: EU
+  _BQ_DATASET: takt
+
+options:
+  logging: CLOUD_LOGGING_ONLY
+  dynamic_substitutions: true
+
+steps:
+  - id: build
+    name: gcr.io/cloud-builders/docker
+    dir: server
+    args:
+      - build
+      - -t
+      - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPO}/${_SERVICE}:$SHORT_SHA
+      - -t
+      - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPO}/${_SERVICE}:latest
+      - .
+
+  - id: push
+    name: gcr.io/cloud-builders/docker
+    args: [push, --all-tags, "${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPO}/${_SERVICE}"]
+
+  - id: deploy
+    name: gcr.io/google.com/cloudsdktool/cloud-sdk
+    entrypoint: gcloud
+    args:
+      - run
+      - deploy
+      - ${_SERVICE}
+      - --image=${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPO}/${_SERVICE}:$SHORT_SHA
+      - --region=${_REGION}
+      - --platform=managed
+      - --service-account=${_SA}
+      - --allow-unauthenticated
+      - --set-env-vars=TAKT_GCP_PROJECT=$PROJECT_ID,TAKT_BQ_DATASET=${_BQ_DATASET},TAKT_BQ_LOCATION=${_BQ_LOCATION},TAKT_GITHUB_ORG=${_GITHUB_ORG}
+      - --max-instances=10
+      - --concurrency=40
+      - --cpu=1
+      - --memory=512Mi
+      - --timeout=30s
+
+images:
+  - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPO}/${_SERVICE}

@@ -1,10 +1,14 @@
 {
   "manifest_version": 3,
   "name": "Takt",
-  "version": "0.1.0",
+  "version": "0.3.0",
   "description": "GitHub-native time tracker. Track time directly on issues and sync to GitHub Projects.",
   "permissions": ["storage", "alarms"],
-  "host_permissions": ["https://api.github.com/*"],
+  "host_permissions": [
+    "https://api.github.com/*",
+    "http://localhost/*",
+    "http://127.0.0.1/*"
+  ],
   "background": {
     "service_worker": "background/service-worker.js",
     "type": "module"
@@ -15,7 +19,7 @@
         "https://github.com/*/*/issues/*",
         "https://github.com/orgs/*/projects/*"
       ],
-      "js": ["content/github.js"],
+      "js": ["lib/time-format.js", "content/github.js"],
       "run_at": "document_idle"
     }
   ],

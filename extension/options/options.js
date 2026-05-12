@@ -2,7 +2,10 @@
   'use strict';
 
   const patInput = document.getElementById('pat');
+  const backendUrlInput = document.getElementById('backend-url');
+  const backendStatusPip = document.getElementById('backend-status-pip');
   const btnValidate = document.getElementById('btn-validate');
+  const btnBackfill = document.getElementById('btn-backfill');
   const statusEl = document.getElementById('status');
   const projectsSection = document.getElementById('projects-section');
   const projectsList = document.getElementById('projects-list');
@@ -26,7 +29,56 @@
   chrome.storage.local.get('settings', ({ settings }) => {
     if (settings) {
       patInput.value = settings.pat || '';
+      backendUrlInput.value = settings.backendUrl || 'http://localhost:8000';
+    } else {
+      backendUrlInput.value = 'http://localhost:8000';
     }
+    refreshBackendStatus();
+  });
+
+  // Persist backend URL on blur so the ping reflects the latest value.
+  backendUrlInput.addEventListener('blur', async () => {
+    const url = backendUrlInput.value.trim().replace(/\/+$/, '');
+    const { settings: existing } = await chrome.storage.local.get('settings');
+    await chrome.storage.local.set({ settings: { ...existing, backendUrl: url } });
+    refreshBackendStatus();
+  });
+
+  function setPip(text, color) {
+    backendStatusPip.innerHTML =
+      `<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${color};margin-right:4px;vertical-align:middle;"></span>` +
+      `<span style="color:${color};">${text}</span>`;
+  }
+
+  async function refreshBackendStatus() {
+    setPip('checking…', '#656d76');
+    const resp = await sendMessage('BACKEND_PING');
+    if (resp?.ok) {
+      const me = resp.me || {};
+      const role = me.role === 'admin' ? ' (admin)' : '';
+      setPip(`connected as ${me.login}${role}`, '#1a7f37');
+    } else {
+      const code = resp?.error?.code || 'error';
+      const msg = resp?.error?.message || 'unreachable';
+      setPip(`${code}: ${msg}`, '#d1242f');
+    }
+  }
+
+  btnBackfill.addEventListener('click', async () => {
+    btnBackfill.disabled = true;
+    showStatus(statusEl, 'Backfilling local sessions to backend…', 'loading');
+    const resp = await sendMessage('BACKFILL_LOCAL');
+    if (resp?.ok) {
+      showStatus(
+        statusEl,
+        `Queued ${resp.queued}; pushed ${resp.flushed?.processed ?? 0}; ${resp.flushed?.remaining ?? 0} retrying.`,
+        'success'
+      );
+    } else {
+      showStatus(statusEl, `Backfill failed: ${resp?.error || 'unknown'}`, 'error');
+    }
+    btnBackfill.disabled = false;
+    refreshBackendStatus();
   });
 
   // --- Validate & fetch projects ---

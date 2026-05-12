@@ -147,6 +147,42 @@
     .td-actions { text-align: right; white-space: nowrap; }
     td a { color: #0969da; text-decoration: none; }
     td a:hover { text-decoration: underline; }
+    .source-pip {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      font-size: 11px;
+      color: #656d76;
+      margin-left: 8px;
+    }
+    .source-pip .dot {
+      display: inline-block;
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+    }
+    .source-pip--backend .dot { background: #1a7f37; }
+    .source-pip--local .dot { background: #9a6700; }
+    .source-pip--error .dot { background: #d1242f; }
+    .edit-input {
+      font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+      font-size: 13px;
+      width: 96px;
+      padding: 2px 6px;
+      border: 1px solid #0969da;
+      border-radius: 4px;
+      text-align: right;
+    }
+    .edit-input:focus {
+      outline: none;
+      box-shadow: 0 0 0 2px rgba(9, 105, 218, 0.3);
+    }
+    .duration-editable { cursor: text; }
+    .duration-editable:hover {
+      background: #ddf4ff;
+      border-radius: 4px;
+      box-shadow: 0 0 0 2px #ddf4ff;
+    }
   </style>
 </head>
 <body>
@@ -157,6 +193,7 @@
           <path d="M8 0a8 8 0 110 16A8 8 0 018 0zm0 1.5a6.5 6.5 0 100 13 6.5 6.5 0 000-13zM8 3a.75.75 0 01.75.75v3.69l2.28 2.28a.75.75 0 01-1.06 1.06l-2.5-2.5A.75.75 0 017.25 8V3.75A.75.75 0 018 3z"/>
         </svg>
         My Time
+        <span id="source-pip" class="source-pip"><span class="dot"></span><span id="source-pip-text">loading…</span></span>
       </h1>
       <div class="header-actions">
         <button class="btn btn--primary" id="btn-export">
@@ -203,6 +240,7 @@
     </div>
   </div>
 
+  <script src="../lib/time-format.js"></script>
   <script src="mytime.js"></script>
 </body>
 </html>

@@ -95,6 +95,7 @@
           renderActive();
           stopDisplayTimer();
           loadSessions();
+          refreshSyncStatus();
         }
       });
     });
@@ -161,6 +162,25 @@
     });
   }
 
+  async function refreshSyncStatus() {
+    const el = document.getElementById('sync-status');
+    if (!el) return;
+    const [ping, queue] = await Promise.all([
+      sendMessage('BACKEND_PING'),
+      sendMessage('QUEUE_LENGTH'),
+    ]);
+    const dot = (color) =>
+      `<span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:${color};margin-right:4px;vertical-align:middle;"></span>`;
+    if (ping?.ok) {
+      const pending = queue?.length || 0;
+      el.innerHTML = pending > 0
+        ? dot('#bf8700') + `${pending} pending`
+        : dot('#1a7f37') + 'synced';
+    } else {
+      el.innerHTML = dot('#d1242f') + 'offline';
+    }
+  }
+
   function init() {
     sendMessage('GET_STATE').then((state) => {
       currentSession = state?.activeSession || null;
@@ -168,6 +188,7 @@
       toggleDisplayTimer();
       renderSessions(state?.completedSessions || []);
     });
+    refreshSyncStatus();
   }
 
   // --- Options link ---

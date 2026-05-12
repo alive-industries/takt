@@ -274,6 +274,7 @@
           repo: issue.repo,
           issueNumber: issue.issueNumber,
           issueTitle: title,
+          sourceUrl: window.location.href,
         }).then((resp) => {
           if (resp?.ok) {
             currentSession = resp.session;
@@ -308,24 +309,6 @@
 
   // --- Manual time edit (double-click) ---
 
-  function parseTimeString(str) {
-    // Accept HH:MM:SS, H:MM:SS, MM:SS, or just minutes as a number
-    str = str.trim();
-    const hms = str.match(/^(\d{1,2}):(\d{2}):(\d{2})$/);
-    if (hms) {
-      return (parseInt(hms[1]) * 3600 + parseInt(hms[2]) * 60 + parseInt(hms[3])) * 1000;
-    }
-    const ms = str.match(/^(\d{1,2}):(\d{2})$/);
-    if (ms) {
-      return (parseInt(ms[1]) * 60 + parseInt(ms[2])) * 1000;
-    }
-    const num = parseFloat(str);
-    if (!isNaN(num)) {
-      return num * 60 * 1000; // treat bare number as minutes
-    }
-    return null;
-  }
-
   function showTimeEditor(container, issue) {
     if (!currentSession) return;
     const elapsed = computeElapsed(currentSession);
@@ -337,9 +320,8 @@
     const input = document.createElement('input');
     input.type = 'text';
     input.className = 'takt-time-input';
-    input.value = formatElapsed(elapsed);
     input.placeholder = 'HH:MM:SS';
-    input.title = 'Enter time as HH:MM:SS, MM:SS, or minutes';
+    input.title = 'Type digits — last 2 = seconds, next 2 = minutes (e.g. 3000 = 30 min)';
 
     // Pause display updates while editing
     stopDisplayTimer();
@@ -353,14 +335,16 @@
       btn.appendChild(input);
     }
 
+    // Shared digit-buffer behaviour. Loaded as a content script via
+    // manifest, so window.TaktTime is in our isolated world.
+    const handle = self.TaktTime.bindTimeInput(input, { initialMs: elapsed });
     input.focus();
-    input.select();
 
     let committed = false;
     function commitEdit() {
       if (committed) return;
       committed = true;
-      const ms = parseTimeString(input.value);
+      const ms = handle.getMs();
       if (ms !== null) {
         sendMessage('SET_TIME', { ms }).then((resp) => {
           if (resp?.ok) {
