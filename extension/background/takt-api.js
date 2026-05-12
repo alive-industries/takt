@@ -89,6 +89,22 @@ export async function getOrgConfig() {
   return request('GET', '/v1/config');
 }
 
+// --- Admin endpoints (server enforces role=admin) ---
+
+export async function listMembers() {
+  return request('GET', '/v1/members');
+}
+
+export async function upsertMember(member) {
+  // member: { github_login, role?, status? }
+  return request('POST', '/v1/members', { body: member });
+}
+
+export async function putOrgConfig(config) {
+  // config: { default_field_name?, project_fields?, excluded_projects? }
+  return request('PUT', '/v1/config', { body: config });
+}
+
 // Health/ping helper for status pip
 export async function ping() {
   try {

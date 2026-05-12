@@ -6,31 +6,34 @@ import {
   listSessions as listBackendSessions,
   updateSession as updateBackendSession,
   deleteSession as deleteBackendSession,
+  listMembers as listBackendMembers,
+  upsertMember as upsertBackendMember,
+  getOrgConfig as getBackendOrgConfig,
+  putOrgConfig as putBackendOrgConfig,
 } from './takt-api.js';
 import * as cache from './local-store.js';
 
 const ALARM_NAME = 'takt-tick';
-const MAX_COMPLETED = 50;
 const TAKT_VERSION = chrome.runtime.getManifest().version;
 
 // --- State helpers ---
 
 async function getState() {
-  const { activeSession = null, completedSessions = [] } =
-    await chrome.storage.local.get(['activeSession', 'completedSessions']);
-  return { activeSession, completedSessions };
+  const { activeSession = null } =
+    await chrome.storage.local.get(['activeSession']);
+  return { activeSession };
 }
 
 async function saveSession(activeSession) {
   await chrome.storage.local.set({ activeSession });
 }
 
-async function pushCompleted(session, completedSessions) {
-  completedSessions.unshift(session);
-  if (completedSessions.length > MAX_COMPLETED) {
-    completedSessions.length = MAX_COMPLETED;
-  }
-  await chrome.storage.local.set({ completedSessions });
+// Read legacy completedSessions[] for one-shot operations like backfill.
+// New sessions are written into the cache only (see local-store.js).
+async function getLegacyCompleted() {
+  const { completedSessions = [] } =
+    await chrome.storage.local.get(['completedSessions']);
+  return completedSessions;
 }
 
 function computeElapsed(session) {
@@ -182,7 +185,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 });
 
 async function handleMessage({ action, payload }) {
-  const { activeSession, completedSessions } = await getState();
+  const { activeSession } = await getState();
 
   switch (action) {
     case 'START': {
@@ -274,7 +277,6 @@ async function handleMessage({ action, payload }) {
         completedAt,
       };
       await saveSession(null);
-      await pushCompleted(completed, completedSessions);
       clearAlarm();
 
       // Write into the local cache immediately as 'pending'. Marked
@@ -355,18 +357,7 @@ async function handleMessage({ action, payload }) {
       return {
         activeSession,
         elapsedMs: computeElapsed(activeSession),
-        completedSessions,
       };
-    }
-
-    case 'DELETE_SESSION': {
-      const index = payload.index;
-      if (typeof index !== 'number' || index < 0 || index >= completedSessions.length) {
-        return { error: 'Invalid session index' };
-      }
-      completedSessions.splice(index, 1);
-      await chrome.storage.local.set({ completedSessions });
-      return { ok: true, completedSessions };
     }
 
     case 'FETCH_ALL_PROJECTS': {
@@ -457,17 +448,54 @@ async function handleMessage({ action, payload }) {
       }
     }
 
+    case 'ADMIN_LIST_MEMBERS': {
+      try {
+        const members = await listBackendMembers();
+        return { ok: true, members };
+      } catch (err) {
+        return { ok: false, error: { code: err.code, message: err.message, status: err.status } };
+      }
+    }
+
+    case 'ADMIN_UPSERT_MEMBER': {
+      try {
+        const member = await upsertBackendMember(payload);
+        return { ok: true, member };
+      } catch (err) {
+        return { ok: false, error: { code: err.code, message: err.message, status: err.status } };
+      }
+    }
+
+    case 'ADMIN_GET_ORG_CONFIG': {
+      try {
+        const config = await getBackendOrgConfig();
+        return { ok: true, config };
+      } catch (err) {
+        return { ok: false, error: { code: err.code, message: err.message, status: err.status } };
+      }
+    }
+
+    case 'ADMIN_PUT_ORG_CONFIG': {
+      try {
+        const config = await putBackendOrgConfig(payload);
+        return { ok: true, config };
+      } catch (err) {
+        return { ok: false, error: { code: err.code, message: err.message, status: err.status } };
+      }
+    }
+
     case 'CACHE_COUNTS': {
       return { ok: true, ...(await cache.counts()), lastSyncAt: await cache.getLastSyncAt() };
     }
 
     case 'BACKFILL_LOCAL': {
-      // Push every item in completedSessions that isn't already on the
-      // backend. We have no way to know "already on the backend" without a
-      // round-trip per item; cheap heuristic: synthesise a session_id from
+      // Push every item in legacy completedSessions[] that isn't already on
+      // the backend. We have no way to know "already on the backend" without
+      // a round-trip per item; cheap heuristic: synthesise a session_id from
       // (repo, issue_number, completedAt) so re-runs are idempotent.
+      const legacy = await getLegacyCompleted();
       const queued = [];
-      for (const s of completedSessions) {
+      for (const s of legacy) {
         const stableId = await stableSessionId(s);
         const payload = toBackendSession(
           {

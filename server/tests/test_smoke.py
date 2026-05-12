@@ -69,3 +69,36 @@ def test_session_update_negative_duration_rejected() -> None:
             json={"duration_ms": -1},
         )
         assert resp.status_code in (401, 422)
+
+
+def test_admin_routes_require_auth() -> None:
+    with TestClient(app) as client:
+        assert client.get("/v1/members").status_code == 401
+        assert (
+            client.post("/v1/members", json={"github_login": "x"}).status_code == 401
+        )
+        assert client.get("/v1/config").status_code == 401
+        assert (
+            client.put("/v1/config", json={"default_field_name": "Hours"}).status_code
+            == 401
+        )
+
+
+def test_member_update_rejects_unknown_fields() -> None:
+    with TestClient(app) as client:
+        resp = client.post(
+            "/v1/members",
+            headers={"Authorization": "Bearer fake"},
+            json={"github_login": "x", "rolex": "admin"},  # typo
+        )
+        assert resp.status_code in (401, 422)
+
+
+def test_org_config_update_rejects_unknown_fields() -> None:
+    with TestClient(app) as client:
+        resp = client.put(
+            "/v1/config",
+            headers={"Authorization": "Bearer fake"},
+            json={"default_field_naem": "Hours"},  # typo
+        )
+        assert resp.status_code in (401, 422)

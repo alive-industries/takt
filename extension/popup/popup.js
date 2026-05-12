@@ -157,8 +157,11 @@
   // --- Load data ---
 
   function loadSessions() {
-    chrome.storage.local.get('completedSessions', ({ completedSessions }) => {
-      renderSessions(completedSessions || []);
+    sendMessage('LIST_LOCAL_SESSIONS', { limit: 5 }).then((resp) => {
+      const records = resp?.sessions || [];
+      // Cache records use { issueNumber, durationMs, completedAt } too, so
+      // renderSessions works directly.
+      renderSessions(records);
     });
   }
 
@@ -186,8 +189,8 @@
       currentSession = state?.activeSession || null;
       renderActive();
       toggleDisplayTimer();
-      renderSessions(state?.completedSessions || []);
     });
+    loadSessions();
     refreshSyncStatus();
   }
 

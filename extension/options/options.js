@@ -53,16 +53,26 @@
   async function refreshBackendStatus() {
     setPip('checking…', '#656d76');
     const resp = await sendMessage('BACKEND_PING');
+    const adminLinkField = document.getElementById('admin-link-field');
     if (resp?.ok) {
       const me = resp.me || {};
       const role = me.role === 'admin' ? ' (admin)' : '';
       setPip(`connected as ${me.login}${role}`, '#1a7f37');
+      if (adminLinkField) {
+        adminLinkField.style.display = me.role === 'admin' ? '' : 'none';
+      }
     } else {
       const code = resp?.error?.code || 'error';
       const msg = resp?.error?.message || 'unreachable';
       setPip(`${code}: ${msg}`, '#d1242f');
+      if (adminLinkField) adminLinkField.style.display = 'none';
     }
   }
+
+  document.getElementById('admin-link').addEventListener('click', (e) => {
+    e.preventDefault();
+    chrome.tabs.create({ url: chrome.runtime.getURL('admin/admin.html') });
+  });
 
   btnBackfill.addEventListener('click', async () => {
     btnBackfill.disabled = true;

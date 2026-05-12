@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Takt Admin</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", Helvetica, Arial, sans-serif;
+      font-size: 14px;
+      color: #1f2328;
+      background: #f6f8fa;
+      padding: 32px;
+    }
+    .container { max-width: 760px; margin: 0 auto; }
+    .card {
+      background: #fff;
+      border: 1px solid #d1d9e0;
+      border-radius: 12px;
+      padding: 24px;
+      margin-bottom: 16px;
+    }
+    h1 { font-size: 22px; font-weight: 600; margin-bottom: 4px; }
+    h2 { font-size: 16px; font-weight: 600; margin-bottom: 4px; }
+    .subtitle { font-size: 13px; color: #656d76; margin-bottom: 20px; }
+    .hint { font-size: 12px; color: #656d76; margin-bottom: 12px; }
+
+    .row { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+    input[type="text"], select {
+      padding: 6px 10px;
+      border: 1px solid #d1d9e0;
+      border-radius: 6px;
+      font-size: 13px;
+      font-family: inherit;
+    }
+    input[type="text"] { flex: 1; }
+    input:focus, select:focus {
+      outline: none;
+      border-color: #0969da;
+      box-shadow: 0 0 0 3px rgba(9, 105, 218, 0.15);
+    }
+    .btn {
+      padding: 6px 14px;
+      border: none;
+      border-radius: 6px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    .btn--primary { background: #1f883d; color: #fff; }
+    .btn--primary:hover { background: #1a7f37; }
+    .btn--secondary { background: #f6f8fa; color: #1f2328; border: 1px solid #d1d9e0; }
+    .btn--secondary:hover { background: #eaeef2; }
+    .btn--danger { background: #cf222e; color: #fff; }
+    .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+      margin-top: 12px;
+    }
+    th, td {
+      text-align: left;
+      padding: 8px 10px;
+      border-bottom: 1px solid #eaeef2;
+    }
+    th {
+      font-weight: 600;
+      color: #656d76;
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+    td.actions-cell { white-space: nowrap; text-align: right; }
+    .badge {
+      display: inline-block;
+      font-size: 11px;
+      padding: 2px 8px;
+      border-radius: 12px;
+      font-weight: 600;
+    }
+    .badge--admin { background: #ddf4ff; color: #0969da; }
+    .badge--member { background: #f6f8fa; color: #656d76; }
+    .badge--active { background: #dafbe1; color: #1a7f37; }
+    .badge--revoked { background: #ffebe9; color: #cf222e; }
+    .badge--pending { background: #fff8c5; color: #9a6700; }
+    .badge--org { background: #f0f2ff; color: #5e63a8; margin-left: 6px; }
+    .badge--manual { background: #f6f8fa; color: #656d76; margin-left: 6px; }
+
+    .status { font-size: 13px; margin-left: 12px; }
+    .status--success { color: #1a7f37; }
+    .status--error { color: #cf222e; }
+    .status--loading { color: #656d76; }
+
+    .muted { color: #656d76; font-size: 12px; }
+    pre.code {
+      font-family: ui-monospace, SFMono-Regular, "SF Mono", monospace;
+      font-size: 12px;
+      background: #f6f8fa;
+      border: 1px solid #d1d9e0;
+      border-radius: 6px;
+      padding: 10px;
+      overflow-x: auto;
+      max-height: 200px;
+    }
+
+    .actions-bar {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-top: 16px;
+      padding-top: 16px;
+      border-top: 1px solid #eaeef2;
+    }
+    .gate {
+      display: none;
+      padding: 16px;
+      background: #ffebe9;
+      color: #cf222e;
+      border-radius: 8px;
+      font-size: 13px;
+    }
+    .gate.visible { display: block; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Takt Admin</h1>
+    <p class="subtitle">Manage org members and publish shared project field configuration. <a href="#" id="back-link">Back to settings</a></p>
+
+    <div class="gate" id="gate"></div>
+
+    <div class="card" id="members-card" style="display:none;">
+      <h2>Members</h2>
+      <p class="hint">Members granted access to push time records. GitHub org members of <strong id="org-label">your org</strong> are auto-admitted.</p>
+
+      <div class="row">
+        <input type="text" id="new-login" placeholder="github_login" autocomplete="off">
+        <select id="new-role">
+          <option value="member">member</option>
+          <option value="admin">admin</option>
+        </select>
+        <button class="btn btn--primary" id="btn-add">Add / Update</button>
+        <span id="add-status" class="status"></span>
+      </div>
+
+      <table id="members-table">
+        <thead>
+          <tr>
+            <th>Login</th>
+            <th>Role</th>
+            <th>Status</th>
+            <th>Source</th>
+            <th>Added</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody id="members-tbody"></tbody>
+      </table>
+    </div>
+
+    <div class="card" id="config-card" style="display:none;">
+      <h2>Org config</h2>
+      <p class="hint">
+        Shared configuration that applies to every member of your org. Saved to the backend and read by
+        members on connect.
+      </p>
+
+      <div class="field-group" style="margin-top:12px;">
+        <label for="default-field-input" style="display:block;font-size:13px;font-weight:600;margin-bottom:4px;">Default field name</label>
+        <p class="hint" style="margin-bottom:6px;">
+          The Number field on each project that Takt writes tracked time to (e.g. <code>Actual Hours</code>, <code>Actual</code>, <code>Time Spent</code>).
+        </p>
+        <input type="text" id="default-field-input" placeholder="Actual Hours" style="width:100%;">
+      </div>
+
+      <div class="field-group" style="margin-top:20px;">
+        <label style="display:block;font-size:13px;font-weight:600;margin-bottom:4px;">Excluded projects</label>
+        <p class="hint" style="margin-bottom:8px;">
+          Tick projects to exclude from time tracking. Only org projects are listed (personal projects are never tracked).
+          <span id="projects-meta" class="muted" style="margin-left:6px;"></span>
+        </p>
+        <div id="excluded-projects-list" style="border:1px solid #d1d9e0;border-radius:6px;padding:4px 0;max-height:280px;overflow-y:auto;">
+          <div class="muted" style="padding:10px;">Loading projects…</div>
+        </div>
+      </div>
+
+      <div class="actions-bar">
+        <button class="btn btn--primary" id="btn-save-config">Save</button>
+        <button class="btn btn--secondary" id="btn-refresh-config">Refresh from backend</button>
+        <span id="config-status" class="status"></span>
+      </div>
+    </div>
+  </div>
+
+  <script src="admin.js"></script>
+</body>
+</html>
