@@ -67,6 +67,27 @@
     return div.innerHTML;
   }
 
+  // Sync state icon. 'pending' = STOP not yet pushed; 'dirty' = edit
+  // not yet pushed; 'synced' = matches BigQuery; 'error' = last push
+  // failed (set transiently by the edit handler).
+  function syncBadgeHtml(status) {
+    if (status === 'synced' || !status) {
+      return '<span class="sync-badge sync-badge--synced" title="Synced to BigQuery">' +
+        '<svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">' +
+        '<path d="M13.78 4.22a.75.75 0 0 1 0 1.06l-7.25 7.25a.75.75 0 0 1-1.06 0L2.22 9.28a.751.751 0 0 1 .018-1.042.751.751 0 0 1 1.042-.018L6 10.94l6.72-6.72a.75.75 0 0 1 1.06 0Z"/>' +
+        '</svg></span>';
+    }
+    if (status === 'error') {
+      return '<span class="sync-badge sync-badge--error" title="Sync failed">' +
+        '<svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">' +
+        '<path d="M6.457 1.047c.659-1.234 2.427-1.234 3.086 0l6.082 11.378A1.75 1.75 0 0 1 14.082 15H1.918a1.75 1.75 0 0 1-1.543-2.575Zm1.763.707a.25.25 0 0 0-.44 0L1.698 13.132a.25.25 0 0 0 .22.368h12.164a.25.25 0 0 0 .22-.368Zm.53 3.996v2.5a.75.75 0 0 1-1.5 0v-2.5a.75.75 0 0 1 1.5 0ZM9 11a1 1 0 1 1-2 0 1 1 0 0 1 2 0Z"/>' +
+        '</svg></span>';
+    }
+    // 'pending' or 'dirty' — animated spinner
+    const title = status === 'dirty' ? 'Edit syncing…' : 'Push syncing…';
+    return `<span class="sync-badge" title="${title}"><span class="sync-spinner"></span></span>`;
+  }
+
   function startOfThisMonth() {
     const d = new Date();
     return new Date(d.getFullYear(), d.getMonth(), 1);
@@ -156,29 +177,23 @@
 
     if (sessions.length === 0) {
       sessionsBody.innerHTML =
-        '<tr><td colspan="6" class="empty-state">No time entries found.</td></tr>';
+        '<tr><td colspan="7" class="empty-state">No time entries found.</td></tr>';
       return;
     }
 
     sessionsBody.innerHTML = sessions
       .map((s) => {
-        // Every cache entry has a sessionId; rows with non-synced state
-        // get a hint pip so the user knows their edit is in flight.
         const editable = !!s.sessionId;
         const editableClass = editable ? ' duration-editable' : '';
         const editTitle = editable ? ' title="Click to edit"' : '';
-        const statusBadge = s.syncStatus === 'pending'
-          ? ' <span title="Push pending" style="color:#9a6700;font-size:11px;">⟳</span>'
-          : s.syncStatus === 'dirty'
-            ? ' <span title="Edit pending" style="color:#9a6700;font-size:11px;">✎</span>'
-            : '';
         return `
           <tr data-sid="${escapeHtml(s.sessionId || '')}">
-            <td class="muted">${formatDate(s.completedAt)}${statusBadge}</td>
+            <td class="muted">${formatDate(s.completedAt)}</td>
             <td><a href="https://github.com/${escapeHtml(s.repo)}" target="_blank">${escapeHtml(s.repo)}</a></td>
             <td><a href="https://github.com/${escapeHtml(s.repo)}/issues/${s.issueNumber}" target="_blank">#${s.issueNumber} ${escapeHtml(s.issueTitle || '')}</a></td>
             <td class="mono${editableClass}" data-col="duration"${editTitle}>${formatDuration(s.durationMs)}</td>
             <td class="mono">${toHours(s.durationMs).toFixed(2)}</td>
+            <td class="td-sync">${syncBadgeHtml(s.syncStatus)}</td>
             <td class="td-actions">
               <button class="btn btn--danger btn--sm btn-delete" title="Remove entry">
                 <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor"><path d="M11 1.75V3h2.25a.75.75 0 0 1 0 1.5H2.75a.75.75 0 0 1 0-1.5H5V1.75C5 .784 5.784 0 6.75 0h2.5C10.216 0 11 .784 11 1.75ZM4.496 6.675l.66 6.6a.25.25 0 0 0 .249.225h5.19a.25.25 0 0 0 .249-.225l.66-6.6a.75.75 0 0 1 1.492.149l-.66 6.6A1.748 1.748 0 0 1 10.595 15h-5.19a1.75 1.75 0 0 1-1.741-1.575l-.66-6.6a.75.75 0 1 1 1.492-.15ZM6.5 1.75V3h3V1.75a.25.25 0 0 0-.25-.25h-2.5a.25.25 0 0 0-.25.25Z"/></svg>
@@ -237,16 +252,33 @@
         td.textContent = self.TaktTime.formatMs(originalMs);
         return;
       }
-      td.textContent = '…';
+      // Optimistic UI: show the new time immediately and flip the row's
+      // sync badge to a spinner. The cache is updated by the service
+      // worker (UPDATE_BACKEND_SESSION) before the network call; we
+      // mirror that here in the in-memory `allSessions` so a full render
+      // reflects the same state without waiting for the round trip.
+      session.durationMs = newMs;
+      session.durationHours = Math.round((newMs / 3_600_000) * 4) / 4;
+      session.syncStatus = 'dirty';
+      render();
+
       const resp = await sendMessage('UPDATE_BACKEND_SESSION', {
         sessionId,
         patch: { duration_ms: newMs },
       });
       if (resp?.ok) {
+        // Authoritative values from the server (in case rounding differs).
         session.durationMs = resp.session.duration_ms;
+        session.durationHours = resp.session.duration_hours;
+        session.syncStatus = 'synced';
         render();
       } else {
-        td.textContent = self.TaktTime.formatMs(originalMs);
+        // Revert in memory + show error icon on the row. The SW already
+        // restored the cache for us.
+        session.durationMs = originalMs;
+        session.durationHours = Math.round((originalMs / 3_600_000) * 4) / 4;
+        session.syncStatus = 'error';
+        render();
         const msg = resp?.error?.message || 'edit failed';
         setSourcePip('error', msg);
       }

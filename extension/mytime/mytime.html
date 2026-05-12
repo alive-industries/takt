@@ -183,6 +183,30 @@
       border-radius: 4px;
       box-shadow: 0 0 0 2px #ddf4ff;
     }
+    /* Sync column */
+    .td-sync {
+      text-align: center;
+      width: 56px;
+      color: #656d76;
+    }
+    .sync-badge {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 18px;
+      height: 18px;
+    }
+    .sync-badge--synced { color: #1a7f37; }
+    .sync-badge--error  { color: #d1242f; }
+    .sync-spinner {
+      width: 14px;
+      height: 14px;
+      border: 2px solid #d1d9e0;
+      border-top-color: #9a6700;
+      border-radius: 50%;
+      animation: takt-spin 0.7s linear infinite;
+    }
+    @keyframes takt-spin { to { transform: rotate(360deg); } }
   </style>
 </head>
 <body>
@@ -232,6 +256,7 @@
             <th>Issue</th>
             <th>Duration</th>
             <th>Hours</th>
+            <th style="text-align:center;">Sync</th>
             <th></th>
           </tr>
         </thead>
