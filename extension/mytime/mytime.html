@@ -207,6 +207,86 @@
       animation: takt-spin 0.7s linear infinite;
     }
     @keyframes takt-spin { to { transform: rotate(360deg); } }
+
+    /* Add-entry modal */
+    .modal-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(31, 35, 40, 0.4);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 1000;
+    }
+    .modal-overlay[hidden] { display: none; }
+    .modal-card {
+      background: #fff;
+      border-radius: 12px;
+      width: 480px;
+      max-width: 92vw;
+      box-shadow: 0 8px 24px rgba(0,0,0,0.18);
+      overflow: hidden;
+    }
+    .modal-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 14px 20px;
+      border-bottom: 1px solid #d1d9e0;
+    }
+    .modal-header h2 { font-size: 15px; font-weight: 600; }
+    .modal-close {
+      background: none;
+      border: none;
+      font-size: 22px;
+      line-height: 1;
+      color: #656d76;
+      cursor: pointer;
+      padding: 0 6px;
+    }
+    .modal-close:hover { color: #1f2328; }
+    .modal-body { padding: 18px 20px 4px; }
+    .modal-actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 8px;
+      padding: 12px 20px;
+      background: #f6f8fa;
+      border-top: 1px solid #d1d9e0;
+    }
+    .form-row { margin-bottom: 12px; }
+    .form-row label {
+      display: block;
+      font-size: 12px;
+      font-weight: 600;
+      margin-bottom: 4px;
+      color: #1f2328;
+    }
+    .form-row label .muted { font-weight: 400; color: #656d76; }
+    .form-row input {
+      width: 100%;
+      padding: 6px 10px;
+      border: 1px solid #d1d9e0;
+      border-radius: 6px;
+      font-size: 13px;
+      font-family: inherit;
+      background: #fff;
+    }
+    .form-row input:focus {
+      outline: none;
+      border-color: #0969da;
+      box-shadow: 0 0 0 3px rgba(9, 105, 218, 0.15);
+    }
+    .form-row--inline { display: flex; gap: 12px; }
+    .form-row--inline > div { flex: 1; min-width: 0; }
+    .form-error {
+      font-size: 12px;
+      color: #d1242f;
+      min-height: 16px;
+      margin-top: 4px;
+      margin-bottom: 8px;
+    }
+    .btn-add { margin-right: 4px; }
   </style>
 </head>
 <body>
@@ -220,6 +300,10 @@
         <span id="source-pip" class="source-pip"><span class="dot"></span><span id="source-pip-text">loading…</span></span>
       </h1>
       <div class="header-actions">
+        <button class="btn btn-add" id="btn-add">
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M7.75 2a.75.75 0 0 1 .75.75V7h4.25a.75.75 0 0 1 0 1.5H8.5v4.25a.75.75 0 0 1-1.5 0V8.5H2.75a.75.75 0 0 1 0-1.5H7V2.75A.75.75 0 0 1 7.75 2Z"/></svg>
+          Add entry
+        </button>
         <button class="btn btn--primary" id="btn-export">
           <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M2.75 14A1.75 1.75 0 0 1 1 12.25v-2.5a.75.75 0 0 1 1.5 0v2.5c0 .138.112.25.25.25h10.5a.25.25 0 0 0 .25-.25v-2.5a.75.75 0 0 1 1.5 0v2.5A1.75 1.75 0 0 1 13.25 14ZM7.25 7.689V2a.75.75 0 0 1 1.5 0v5.689l1.97-1.969a.749.749 0 1 1 1.06 1.06l-3.25 3.25a.749.749 0 0 1-1.06 0L4.22 6.78a.749.749 0 1 1 1.06-1.06Z"/></svg>
           Export CSV
@@ -262,6 +346,45 @@
         </thead>
         <tbody id="sessions-body"></tbody>
       </table>
+    </div>
+  </div>
+
+  <div class="modal-overlay" id="add-modal" hidden>
+    <div class="modal-card" role="dialog" aria-labelledby="add-modal-title">
+      <div class="modal-header">
+        <h2 id="add-modal-title">Add time entry</h2>
+        <button class="modal-close" id="add-close" aria-label="Close">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-row">
+          <label for="add-repo">Git Repo <span class="muted">or task name</span></label>
+          <input type="text" id="add-repo" list="repo-suggestions" placeholder="owner/repo or e.g. client meeting" autocomplete="off" spellcheck="false">
+          <datalist id="repo-suggestions"></datalist>
+        </div>
+        <div class="form-row form-row--inline">
+          <div>
+            <label for="add-issue">Issue #</label>
+            <input type="number" id="add-issue" min="1" step="1" placeholder="123" inputmode="numeric">
+          </div>
+          <div>
+            <label for="add-date">Date</label>
+            <input type="date" id="add-date">
+          </div>
+          <div>
+            <label for="add-duration">Duration</label>
+            <input type="text" id="add-duration" class="mono" placeholder="HH:MM:SS">
+          </div>
+        </div>
+        <div class="form-row">
+          <label for="add-title">Issue title <span class="muted">(optional)</span></label>
+          <input type="text" id="add-title" placeholder="What you worked on" autocomplete="off">
+        </div>
+        <div class="form-error" id="add-error"></div>
+      </div>
+      <div class="modal-actions">
+        <button class="btn" id="add-cancel">Cancel</button>
+        <button class="btn btn--primary" id="add-submit">Add entry</button>
+      </div>
     </div>
   </div>
 

@@ -427,5 +427,105 @@
   filterTo.addEventListener('change', refresh);
   btnExport.addEventListener('click', exportCsv);
 
+  // --- Add-entry modal ---
+
+  const btnAdd = document.getElementById('btn-add');
+  const addModal = document.getElementById('add-modal');
+  const addRepoInput = document.getElementById('add-repo');
+  const addIssueInput = document.getElementById('add-issue');
+  const addTitleInput = document.getElementById('add-title');
+  const addDateInput = document.getElementById('add-date');
+  const addDurationInput = document.getElementById('add-duration');
+  const addErrorEl = document.getElementById('add-error');
+  const addSubmitBtn = document.getElementById('add-submit');
+  const addCancelBtn = document.getElementById('add-cancel');
+  const addCloseBtn = document.getElementById('add-close');
+  const repoSuggestionsEl = document.getElementById('repo-suggestions');
+
+  // Holds the bindTimeInput handle while the modal is open so we can read
+  // the parsed ms on submit and detach cleanly on reopen.
+  let addDurationHandle = null;
+
+  function openAddModal() {
+    const repos = [...new Set(allSessions.map((s) => s.repo))].sort();
+    repoSuggestionsEl.innerHTML = repos
+      .map((r) => `<option value="${escapeHtml(r)}"></option>`)
+      .join('');
+
+    addRepoInput.value = '';
+    addIssueInput.value = '';
+    addTitleInput.value = '';
+    addDateInput.value = formatDateISO(Date.now());
+    addErrorEl.textContent = '';
+
+    if (addDurationHandle?.detach) addDurationHandle.detach();
+    addDurationInput.value = '';
+    addDurationHandle = self.TaktTime.bindTimeInput(addDurationInput, { initialMs: 0 });
+
+    addModal.hidden = false;
+    addRepoInput.focus();
+  }
+
+  function closeAddModal() {
+    addModal.hidden = true;
+  }
+
+  function showAddError(msg) {
+    addErrorEl.textContent = msg;
+  }
+
+  async function submitAddEntry() {
+    const repo = addRepoInput.value.trim();
+    const issueNumber = parseInt(addIssueInput.value, 10);
+    const issueTitle = addTitleInput.value.trim() || null;
+    const dateStr = addDateInput.value;
+    const durationMs = addDurationHandle?.getMs() ?? null;
+
+    // Accept anything non-empty — could be owner/repo (issue URL/comment
+    // will be valid) or a freeform label like "client meeting" / "admin"
+    // for non-GitHub work. The repo cell renders as a GitHub link either
+    // way; for non-repo labels it'll 404 if clicked, which is the
+    // user's choice when they typed it.
+    if (!repo) return showAddError('Repo or task name is required.');
+    if (!Number.isFinite(issueNumber) || issueNumber < 1) {
+      return showAddError('Issue number is required.');
+    }
+    if (!dateStr) return showAddError('Date is required.');
+    if (!durationMs || durationMs <= 0) {
+      return showAddError('Duration must be greater than zero.');
+    }
+
+    // completed_at = chosen date at 17:00 local. started_at is derived
+    // backward from duration in the SW so the row stays internally
+    // coherent (and matches what UPDATE recomputes on edit).
+    const completedAt = new Date(`${dateStr}T17:00:00`).getTime();
+    if (!Number.isFinite(completedAt)) return showAddError('Invalid date.');
+
+    showAddError('');
+    addSubmitBtn.disabled = true;
+    const resp = await sendMessage('ADD_MANUAL_SESSION', {
+      repo, issueNumber, issueTitle, completedAt, durationMs,
+    });
+    addSubmitBtn.disabled = false;
+
+    if (resp?.ok) {
+      closeAddModal();
+      await refresh();
+    } else {
+      showAddError(resp?.error?.message || 'Failed to add entry.');
+    }
+  }
+
+  btnAdd.addEventListener('click', openAddModal);
+  addCancelBtn.addEventListener('click', closeAddModal);
+  addCloseBtn.addEventListener('click', closeAddModal);
+  addSubmitBtn.addEventListener('click', submitAddEntry);
+  addModal.addEventListener('click', (e) => {
+    if (e.target === addModal) closeAddModal();
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && !addModal.hidden) closeAddModal();
+  });
+
   init();
 })();

@@ -496,6 +496,62 @@ async function handleMessage({ action, payload }) {
       return { ok: true, ...(await cache.counts()), lastSyncAt: await cache.getLastSyncAt() };
     }
 
+    case 'ADD_MANUAL_SESSION': {
+      // Manual entry from My Time (user forgot to start a timer).
+      // Mirrors the STOP write path: optimistic cache insert, then push
+      // to backend; on failure the queue retries. We deliberately skip
+      // the GitHub Projects sync and issue-comment side effects — the
+      // user is reconstructing past work, not closing out a fresh timer.
+      const { repo, issueNumber, issueTitle, completedAt, durationMs } =
+        payload || {};
+      if (!repo || !issueNumber || !completedAt || !durationMs || durationMs <= 0) {
+        return {
+          ok: false,
+          error: { code: 'invalid_input', message: 'Missing or invalid fields.' },
+        };
+      }
+
+      const sessionId = crypto.randomUUID();
+      const startedAtMs = completedAt - durationMs;
+      const durationHoursForCache =
+        Math.round((durationMs / 3_600_000) * 4) / 4;
+
+      await cache.upsertSession({
+        sessionId,
+        repo,
+        issueNumber,
+        issueTitle: issueTitle ?? null,
+        issueUrl: `https://github.com/${repo}/issues/${issueNumber}`,
+        sourceUrl: null,
+        startedAt: startedAtMs,
+        completedAt,
+        durationMs,
+        durationHours: durationHoursForCache,
+        syncedToProject: false,
+        projectTitles: [],
+        taktVersion: TAKT_VERSION,
+        syncStatus: 'pending',
+        syncedAt: null,
+      });
+
+      const completed = {
+        sessionId,
+        repo,
+        issueNumber,
+        issueTitle: issueTitle ?? null,
+        sourceUrl: null,
+        startedAtMs,
+        durationMs,
+        completedAt,
+      };
+
+      // Push to backend. On failure the cache entry stays 'pending' and
+      // the sync queue will retry — so from the user's POV the entry is
+      // saved either way, and the row's sync badge communicates state.
+      const backendResult = await pushCompletedToBackend(completed, null);
+      return { ok: true, sessionId, backendResult };
+    }
+
     case 'BACKFILL_LOCAL': {
       // Push every item in legacy completedSessions[] that isn't already on
       // the backend. We have no way to know "already on the backend" without
