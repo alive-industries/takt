@@ -67,6 +67,38 @@ export async function fetchAllProjects(pat) {
   return { orgs, projects: allProjects };
 }
 
+// Fetch repos the viewer can see (their own + collaborator + org repos).
+// Used by the My Time "Add entry" modal to populate the repo dropdown.
+// Paginates up to 200 repos; anyone past that can still type a name.
+export async function fetchUserRepos(pat) {
+  const repos = [];
+  let cursor = null;
+  for (let page = 0; page < 2; page++) {
+    const data = await graphql(
+      pat,
+      `query ($cursor: String) {
+        viewer {
+          repositories(
+            first: 100,
+            after: $cursor,
+            ownerAffiliations: [OWNER, COLLABORATOR, ORGANIZATION_MEMBER],
+            orderBy: { field: UPDATED_AT, direction: DESC }
+          ) {
+            nodes { nameWithOwner }
+            pageInfo { hasNextPage endCursor }
+          }
+        }
+      }`,
+      { cursor }
+    );
+    const conn = data.viewer.repositories;
+    repos.push(...conn.nodes.map((n) => n.nameWithOwner));
+    if (!conn.pageInfo.hasNextPage) break;
+    cursor = conn.pageInfo.endCursor;
+  }
+  return repos;
+}
+
 export async function fetchProjectNumberFields(pat, projectId) {
   const data = await graphql(
     pat,

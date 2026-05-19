@@ -1,4 +1,4 @@
-import { syncToGitHub, postTimeComment, fetchAllProjects, fetchProjectNumberFields } from './github-api.js';
+import { syncToGitHub, postTimeComment, fetchAllProjects, fetchProjectNumberFields, fetchUserRepos } from './github-api.js';
 import { enqueueSession, flushQueue, queueLength } from './sync-queue.js';
 import {
   pushSession,
@@ -368,6 +368,25 @@ async function handleMessage({ action, payload }) {
     case 'FETCH_PROJECT_FIELDS': {
       const fields = await fetchProjectNumberFields(payload.pat, payload.projectId);
       return { ok: true, fields };
+    }
+
+    case 'FETCH_USER_REPOS': {
+      // Pulls the viewer's accessible repos from GitHub and caches them
+      // under settings.knownRepos so the My Time "Add entry" modal can
+      // show a useful dropdown without re-fetching every open.
+      const { settings = {} } = await chrome.storage.local.get('settings');
+      if (!settings.pat) {
+        return { ok: false, error: { code: 'no_pat', message: 'No PAT configured' } };
+      }
+      try {
+        const repos = await fetchUserRepos(settings.pat);
+        await chrome.storage.local.set({
+          settings: { ...settings, knownRepos: repos },
+        });
+        return { ok: true, repos };
+      } catch (err) {
+        return { ok: false, error: { code: 'fetch_failed', message: err.message } };
+      }
     }
 
     case 'BACKEND_PING': {

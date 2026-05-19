@@ -181,6 +181,13 @@
     return repo ? allSessions.filter((s) => s.repo === repo) : allSessions;
   }
 
+  // True only for repo values that look like a real GitHub `owner/name`
+  // slug — manual entries can use freeform labels like "client meeting",
+  // and those shouldn't render as broken GitHub links.
+  function isGithubRepo(repo) {
+    return /^[^/\s]+\/[^/\s]+$/.test(repo || '');
+  }
+
   function render() {
     const sessions = getVisibleSessions();
 
@@ -199,11 +206,19 @@
         const editable = !!s.sessionId;
         const editableClass = editable ? ' duration-editable' : '';
         const editTitle = editable ? ' title="Click to edit"' : '';
+        const repoIsGh = isGithubRepo(s.repo);
+        const repoCell = repoIsGh
+          ? `<a href="https://github.com/${escapeHtml(s.repo)}" target="_blank">${escapeHtml(s.repo)}</a>`
+          : escapeHtml(s.repo);
+        const issueInner = `#${s.issueNumber} ${escapeHtml(s.issueTitle || '')}`;
+        const issueCell = repoIsGh
+          ? `<a href="https://github.com/${escapeHtml(s.repo)}/issues/${s.issueNumber}" target="_blank">${issueInner}</a>`
+          : escapeHtml(s.issueTitle || `#${s.issueNumber}`);
         return `
           <tr data-sid="${escapeHtml(s.sessionId || '')}">
             <td class="muted">${formatDate(s.completedAt)}</td>
-            <td><a href="https://github.com/${escapeHtml(s.repo)}" target="_blank">${escapeHtml(s.repo)}</a></td>
-            <td><a href="https://github.com/${escapeHtml(s.repo)}/issues/${s.issueNumber}" target="_blank">#${s.issueNumber} ${escapeHtml(s.issueTitle || '')}</a></td>
+            <td>${repoCell}</td>
+            <td>${issueCell}</td>
             <td class="mono${editableClass}" data-col="duration"${editTitle}>${formatDuration(s.durationMs)}</td>
             <td class="mono">${toHours(s.durationMs).toFixed(2)}</td>
             <td class="td-sync">${syncBadgeHtml(s.syncStatus)}</td>
@@ -418,6 +433,11 @@
   async function init() {
     setDefaultDateRange();
     refresh();
+    // Kick off a GitHub repo fetch in the background so the Add modal has
+    // an up-to-date dropdown when the user opens it. Cached to
+    // chrome.storage.local.settings.knownRepos. Fire-and-forget — modal
+    // works fine without it (falls back to previously-tracked repos).
+    sendMessage('FETCH_USER_REPOS').catch(() => {});
   }
 
   // Date filter changes -> different range -> refetch + reconcile.
@@ -446,8 +466,14 @@
   // the parsed ms on submit and detach cleanly on reopen.
   let addDurationHandle = null;
 
-  function openAddModal() {
-    const repos = [...new Set(allSessions.map((s) => s.repo))].sort();
+  async function openAddModal() {
+    // Repo dropdown = union of (a) repos seen in previous time entries
+    // and (b) repos fetched from GitHub by FETCH_USER_REPOS (cached on
+    // settings.knownRepos). Free-text custom labels are allowed too.
+    const fromSessions = new Set(allSessions.map((s) => s.repo));
+    const { settings = {} } = await chrome.storage.local.get('settings');
+    const knownRepos = settings.knownRepos || [];
+    const repos = [...new Set([...knownRepos, ...fromSessions])].sort();
     repoSuggestionsEl.innerHTML = repos
       .map((r) => `<option value="${escapeHtml(r)}"></option>`)
       .join('');
