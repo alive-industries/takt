@@ -85,6 +85,15 @@ export async function deleteSession(sessionId) {
   return request('DELETE', `/v1/sessions/${encodeURIComponent(sessionId)}`);
 }
 
+// Authoritative total for a (repo, issue) across all non-deleted sessions
+// and all users. Used to overwrite the GitHub Projects field after every
+// mutation so edits and deletes also propagate (the old additive sync only
+// handled fresh STOPs correctly).
+export async function getSessionTotals(repo, issueNumber) {
+  const qs = new URLSearchParams({ repo, issue: String(issueNumber) });
+  return request('GET', `/v1/sessions/totals?${qs}`);
+}
+
 export async function updateSession(sessionId, patch) {
   // patch: { duration_ms?: number, issue_title?: string }
   return request('PUT', `/v1/sessions/${encodeURIComponent(sessionId)}`, { body: patch });

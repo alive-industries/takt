@@ -263,7 +263,8 @@
       color: #1f2328;
     }
     .form-row label .muted { font-weight: 400; color: #656d76; }
-    .form-row input {
+    .form-row input,
+    .form-row select {
       width: 100%;
       padding: 6px 10px;
       border: 1px solid #d1d9e0;
@@ -272,11 +273,28 @@
       font-family: inherit;
       background: #fff;
     }
-    .form-row input:focus {
+    .form-row input:focus,
+    .form-row select:focus {
       outline: none;
       border-color: #0969da;
       box-shadow: 0 0 0 3px rgba(9, 105, 218, 0.15);
     }
+    .form-row select:disabled {
+      background: #f6f8fa;
+      color: #8c959f;
+      cursor: not-allowed;
+    }
+    .form-row .field-hint {
+      font-size: 11px;
+      color: #656d76;
+      margin-top: 4px;
+    }
+    .btn--accent {
+      background: #ddf4ff;
+      color: #0969da;
+      border-color: #b6e3ff;
+    }
+    .btn--accent:hover { background: #b6e3ff; }
     .form-row--inline { display: flex; gap: 12px; }
     .form-row--inline > div { flex: 1; min-width: 0; }
     .form-error {
@@ -287,6 +305,66 @@
       margin-bottom: 8px;
     }
     .btn-add { margin-right: 4px; }
+
+    /* Active timer panel — appears at the top when a timer is running.
+       Lets the user pause/resume/stop without leaving My Time. */
+    .active-timer-panel {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      background: #fff;
+      border: 1px solid #d1d9e0;
+      border-left: 4px solid #0969da;
+      border-radius: 8px;
+      padding: 14px 18px;
+      margin-bottom: 16px;
+    }
+    .active-timer-panel[hidden] { display: none; }
+    .active-timer-panel--paused { border-left-color: #bf8700; }
+    .active-timer-info { flex: 1; min-width: 0; }
+    .active-timer-meta {
+      font-size: 11px;
+      color: #656d76;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin-bottom: 2px;
+    }
+    .active-timer-title {
+      font-size: 14px;
+      font-weight: 600;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .active-timer-clock {
+      font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+      font-variant-numeric: tabular-nums;
+      font-size: 28px;
+      font-weight: 600;
+      color: #0969da;
+      letter-spacing: 0.5px;
+    }
+    .active-timer-clock--paused { color: #9a6700; }
+    .active-timer-actions { display: flex; gap: 8px; }
+
+    /* Transient toast for after-Stop sync feedback */
+    .toast {
+      position: fixed;
+      bottom: 24px;
+      right: 24px;
+      max-width: 360px;
+      padding: 10px 14px;
+      border-radius: 8px;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.12);
+      font-size: 13px;
+      line-height: 1.4;
+      z-index: 2000;
+      animation: takt-fade 0.2s ease-out;
+    }
+    .toast--success { background: #dafbe1; color: #0a3622; border: 1px solid #4ac26b; }
+    .toast--warning { background: #fff8c5; color: #4a2900; border: 1px solid #d4a72c; }
+    .toast--error   { background: #ffebe9; color: #4a0813; border: 1px solid #ff8182; }
+    @keyframes takt-fade { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
   </style>
 </head>
 <body>
@@ -300,7 +378,7 @@
         <span id="source-pip" class="source-pip"><span class="dot"></span><span id="source-pip-text">loading…</span></span>
       </h1>
       <div class="header-actions">
-        <button class="btn btn-add" id="btn-add">
+        <button class="btn btn--primary" id="btn-add">
           <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M7.75 2a.75.75 0 0 1 .75.75V7h4.25a.75.75 0 0 1 0 1.5H8.5v4.25a.75.75 0 0 1-1.5 0V8.5H2.75a.75.75 0 0 1 0-1.5H7V2.75A.75.75 0 0 1 7.75 2Z"/></svg>
           Add entry
         </button>
@@ -308,6 +386,18 @@
           <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M2.75 14A1.75 1.75 0 0 1 1 12.25v-2.5a.75.75 0 0 1 1.5 0v2.5c0 .138.112.25.25.25h10.5a.25.25 0 0 0 .25-.25v-2.5a.75.75 0 0 1 1.5 0v2.5A1.75 1.75 0 0 1 13.25 14ZM7.25 7.689V2a.75.75 0 0 1 1.5 0v5.689l1.97-1.969a.749.749 0 1 1 1.06 1.06l-3.25 3.25a.749.749 0 0 1-1.06 0L4.22 6.78a.749.749 0 1 1 1.06-1.06Z"/></svg>
           Export CSV
         </button>
+      </div>
+    </div>
+
+    <div class="active-timer-panel" id="active-timer" hidden>
+      <div class="active-timer-info">
+        <div class="active-timer-meta" id="active-timer-meta">Tracking</div>
+        <div class="active-timer-title" id="active-timer-title">—</div>
+      </div>
+      <div class="active-timer-clock" id="active-timer-clock">00:00:00</div>
+      <div class="active-timer-actions">
+        <button class="btn" id="active-timer-toggle">Pause</button>
+        <button class="btn btn--danger" id="active-timer-stop">Stop</button>
       </div>
     </div>
 
@@ -357,15 +447,29 @@
       </div>
       <div class="modal-body">
         <div class="form-row">
-          <label for="add-repo">Git Repo <span class="muted">or task name</span></label>
-          <input type="text" id="add-repo" list="repo-suggestions" placeholder="owner/repo or e.g. client meeting" autocomplete="off" spellcheck="false">
-          <datalist id="repo-suggestions"></datalist>
+          <label for="add-repo">Repo</label>
+          <select id="add-repo">
+            <option value="">Loading repos…</option>
+          </select>
+          <div class="field-hint">Restricted to the alive-industries org.</div>
+        </div>
+        <div class="form-row">
+          <label for="add-project">Project <span class="muted">(optional — skip for meetings, PM, email)</span></label>
+          <select id="add-project" disabled>
+            <option value="">Pick a repo first</option>
+          </select>
+        </div>
+        <div class="form-row">
+          <label for="add-issue-select">Issue <span class="muted">(optional)</span></label>
+          <select id="add-issue-select" disabled>
+            <option value="">Pick a project first</option>
+          </select>
+        </div>
+        <div class="form-row">
+          <label for="add-title">Title <span class="muted" id="add-title-hint">(autofilled from the issue)</span></label>
+          <input type="text" id="add-title" placeholder="What you worked on" autocomplete="off">
         </div>
         <div class="form-row form-row--inline">
-          <div>
-            <label for="add-issue">Issue #</label>
-            <input type="number" id="add-issue" min="1" step="1" placeholder="123" inputmode="numeric">
-          </div>
           <div>
             <label for="add-date">Date</label>
             <input type="date" id="add-date">
@@ -375,14 +479,14 @@
             <input type="text" id="add-duration" class="mono" placeholder="HH:MM:SS">
           </div>
         </div>
-        <div class="form-row">
-          <label for="add-title">Issue title <span class="muted">(optional)</span></label>
-          <input type="text" id="add-title" placeholder="What you worked on" autocomplete="off">
-        </div>
         <div class="form-error" id="add-error"></div>
       </div>
       <div class="modal-actions">
         <button class="btn" id="add-cancel">Cancel</button>
+        <button class="btn btn--accent" id="add-start" title="Start a live timer with these details (ignores Date / Duration)">
+          <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor" style="vertical-align: text-bottom;"><path d="M4.25 3a.75.75 0 0 1 1.143-.638l7.5 4.75a.75.75 0 0 1 0 1.276l-7.5 4.75A.75.75 0 0 1 4.25 13Z"/></svg>
+          Start tracking
+        </button>
         <button class="btn btn--primary" id="add-submit">Add entry</button>
       </div>
     </div>

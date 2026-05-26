@@ -207,13 +207,22 @@
         const editableClass = editable ? ' duration-editable' : '';
         const editTitle = editable ? ' title="Click to edit"' : '';
         const repoIsGh = isGithubRepo(s.repo);
+        const hasIssue = s.issueNumber > 0;
         const repoCell = repoIsGh
           ? `<a href="https://github.com/${escapeHtml(s.repo)}" target="_blank">${escapeHtml(s.repo)}</a>`
           : escapeHtml(s.repo);
-        const issueInner = `#${s.issueNumber} ${escapeHtml(s.issueTitle || '')}`;
-        const issueCell = repoIsGh
-          ? `<a href="https://github.com/${escapeHtml(s.repo)}/issues/${s.issueNumber}" target="_blank">${issueInner}</a>`
-          : escapeHtml(s.issueTitle || `#${s.issueNumber}`);
+        // issueNumber=0 is the manual-entry "no linked issue" sentinel.
+        // Render the title as-is and skip the GitHub link in that case
+        // so the table doesn't show a phantom #0 link that would 404.
+        let issueCell;
+        if (!hasIssue) {
+          issueCell = `<span class="muted">${escapeHtml(s.issueTitle || '—')}</span>`;
+        } else {
+          const issueInner = `#${s.issueNumber} ${escapeHtml(s.issueTitle || '')}`;
+          issueCell = repoIsGh
+            ? `<a href="https://github.com/${escapeHtml(s.repo)}/issues/${s.issueNumber}" target="_blank">${issueInner}</a>`
+            : escapeHtml(s.issueTitle || `#${s.issueNumber}`);
+        }
         return `
           <tr data-sid="${escapeHtml(s.sessionId || '')}">
             <td class="muted">${formatDate(s.completedAt)}</td>
@@ -433,12 +442,182 @@
   async function init() {
     setDefaultDateRange();
     refresh();
+    refreshActiveTimer();
     // Kick off a GitHub repo fetch in the background so the Add modal has
     // an up-to-date dropdown when the user opens it. Cached to
     // chrome.storage.local.settings.knownRepos. Fire-and-forget — modal
     // works fine without it (falls back to previously-tracked repos).
     sendMessage('FETCH_USER_REPOS').catch(() => {});
   }
+
+  // --- Active-timer panel ---
+  //
+  // Mirrors the popup's live timer: polls GET_STATE, ticks once a second
+  // while running, exposes Pause/Resume/Stop. The user no longer has to
+  // bounce out to the toolbar popup after clicking "Start tracking" from
+  // the Add-entry modal — they can finish the session right here.
+
+  const activeTimerPanel = document.getElementById('active-timer');
+  const activeTimerMeta = document.getElementById('active-timer-meta');
+  const activeTimerTitle = document.getElementById('active-timer-title');
+  const activeTimerClock = document.getElementById('active-timer-clock');
+  const activeTimerToggle = document.getElementById('active-timer-toggle');
+  const activeTimerStop = document.getElementById('active-timer-stop');
+  let activeTimerSession = null;
+  let activeTimerInterval = null;
+
+  function computeElapsedMs(s) {
+    if (!s) return 0;
+    const running = s.status === 'running' ? Date.now() - s.startedAt : 0;
+    return (s.accumulatedMs || 0) + running;
+  }
+
+  function renderActiveTimer() {
+    if (!activeTimerSession) {
+      activeTimerPanel.hidden = true;
+      stopActiveTimerInterval();
+      return;
+    }
+    const s = activeTimerSession;
+    const running = s.status === 'running';
+    activeTimerPanel.hidden = false;
+    activeTimerPanel.classList.toggle('active-timer-panel--paused', !running);
+    activeTimerClock.classList.toggle('active-timer-clock--paused', !running);
+    activeTimerClock.textContent = formatDuration(computeElapsedMs(s));
+    activeTimerToggle.textContent = running ? 'Pause' : 'Resume';
+    // Meta line = repo (+ #issue when linked). Mirrors popup formatting.
+    const ref = s.issueNumber > 0
+      ? `${s.repo} · #${s.issueNumber}`
+      : s.repo;
+    activeTimerMeta.textContent = running ? `Tracking · ${ref}` : `Paused · ${ref}`;
+    activeTimerTitle.textContent = s.issueTitle || (s.issueNumber > 0 ? `Issue #${s.issueNumber}` : 'Untitled');
+    if (running) startActiveTimerInterval();
+    else stopActiveTimerInterval();
+  }
+
+  function startActiveTimerInterval() {
+    if (activeTimerInterval) return;
+    activeTimerInterval = setInterval(() => {
+      if (!activeTimerSession || activeTimerSession.status !== 'running') return;
+      activeTimerClock.textContent = formatDuration(computeElapsedMs(activeTimerSession));
+    }, 1000);
+  }
+
+  function stopActiveTimerInterval() {
+    if (activeTimerInterval) {
+      clearInterval(activeTimerInterval);
+      activeTimerInterval = null;
+    }
+  }
+
+  async function refreshActiveTimer() {
+    const state = await sendMessage('GET_STATE');
+    activeTimerSession = state?.activeSession || null;
+    renderActiveTimer();
+  }
+
+  activeTimerToggle.addEventListener('click', async () => {
+    if (!activeTimerSession) return;
+    const action = activeTimerSession.status === 'running' ? 'PAUSE' : 'RESUME';
+    const resp = await sendMessage(action);
+    if (resp?.ok) {
+      activeTimerSession = resp.session;
+      renderActiveTimer();
+    }
+  });
+
+  activeTimerStop.addEventListener('click', async () => {
+    if (!activeTimerSession) return;
+    activeTimerStop.disabled = true;
+    const resp = await sendMessage('STOP');
+    activeTimerStop.disabled = false;
+    if (resp?.ok) {
+      activeTimerSession = null;
+      renderActiveTimer();
+      // STOP just wrote a new row to BigQuery — re-pull so the table
+      // shows the completed entry immediately.
+      await refresh();
+      // Surface the project-field sync outcome. Until we added this the
+      // Stop button looked silent from My Time and there was no way to
+      // tell whether the GitHub "Actual Hours" field actually updated.
+      showSyncToast(resp.syncResult, resp.backendResult);
+    }
+  });
+
+  // --- Sync result toast ---
+  //
+  // The service worker returns `syncResult` from STOP describing what
+  // happened to the GitHub Project field (overwrite with new total, skip
+  // because the issue isn't linked to a project, error, etc.). My Time
+  // surfaces this as a transient toast so the user can see whether the
+  // Actual Hours field updated — the content-script status pill only
+  // shows on the GitHub issue page.
+  function showSyncToast(syncResult, backendResult) {
+    const messages = [];
+    let variant = 'success';
+
+    if (backendResult && !backendResult.ok) {
+      messages.push(
+        backendResult.queued
+          ? 'Saved locally — backend push queued for retry.'
+          : `Backend push failed: ${backendResult.error || 'unknown'}.`
+      );
+      variant = backendResult.queued ? 'warning' : 'error';
+    }
+
+    if (!syncResult) {
+      messages.push('Saved.');
+    } else if (syncResult.error) {
+      messages.push(`Project sync failed: ${syncResult.error}`);
+      variant = 'error';
+    } else if (syncResult.skipped) {
+      // 'No linked issue', 'Not a GitHub repo', 'Issue is not linked to
+      // any GitHub Project', 'No PAT configured' — show the reason so
+      // the user knows nothing was written to a project field.
+      messages.push(`Saved. ${syncResult.reason || 'No project sync.'}`);
+      if (variant === 'success') variant = 'warning';
+    } else if (syncResult.results?.length) {
+      const synced = syncResult.results.filter((r) => r.synced);
+      const skipped = syncResult.results.filter((r) => r.skipped);
+      const errored = syncResult.results.filter((r) => r.error);
+      const parts = [];
+      if (synced.length) {
+        const names = synced.map((r) => `${r.project} → ${r.hours}h`).join(', ');
+        parts.push(`Actual Hours updated: ${names}`);
+      }
+      if (skipped.length) {
+        parts.push(`Skipped: ${skipped.map((r) => `${r.project} (${r.reason})`).join(', ')}`);
+        if (variant === 'success' && !synced.length) variant = 'warning';
+      }
+      if (errored.length) {
+        parts.push(`Errors: ${errored.map((r) => `${r.project}: ${r.error}`).join(', ')}`);
+        variant = 'error';
+      }
+      messages.push(parts.join(' · '));
+      if (syncResult.fallback === 'local_cache') {
+        messages.push('(used local-cache fallback — server /totals unavailable)');
+        if (variant === 'success') variant = 'warning';
+      }
+    } else {
+      messages.push('Saved.');
+    }
+
+    const toast = document.createElement('div');
+    toast.className = `toast toast--${variant}`;
+    toast.textContent = messages.join(' ');
+    document.body.appendChild(toast);
+    setTimeout(() => toast.remove(), variant === 'error' ? 9000 : 5000);
+  }
+
+  // chrome.storage.local.activeSession is updated by the service worker on
+  // every START / PAUSE / RESUME / STOP / SET_TIME. Listening to it gives
+  // us a free push-update when the user starts a timer from another
+  // surface (popup, content script on an issue page) — no polling needed.
+  chrome.storage.onChanged.addListener((changes, area) => {
+    if (area !== 'local' || !changes.activeSession) return;
+    activeTimerSession = changes.activeSession.newValue || null;
+    renderActiveTimer();
+  });
 
   // Date filter changes -> different range -> refetch + reconcile.
   // Repo filter is purely client-side; just re-render.
@@ -448,48 +627,181 @@
   btnExport.addEventListener('click', exportCsv);
 
   // --- Add-entry modal ---
+  //
+  // Cascading dropdowns: repo -> project (optional) -> issue (optional).
+  // When the user picks an issue we auto-fill the title field; without an
+  // issue (meetings, PM, email) the title field becomes the entry name
+  // and `issueNumber=0` is sent to the backend as the "no linked issue"
+  // sentinel. Repo list is restricted to the alive-industries org server-
+  // side (FETCH_USER_REPOS).
 
   const btnAdd = document.getElementById('btn-add');
   const addModal = document.getElementById('add-modal');
-  const addRepoInput = document.getElementById('add-repo');
-  const addIssueInput = document.getElementById('add-issue');
+  const addRepoSelect = document.getElementById('add-repo');
+  const addProjectSelect = document.getElementById('add-project');
+  const addIssueSelect = document.getElementById('add-issue-select');
   const addTitleInput = document.getElementById('add-title');
+  const addTitleHint = document.getElementById('add-title-hint');
   const addDateInput = document.getElementById('add-date');
   const addDurationInput = document.getElementById('add-duration');
   const addErrorEl = document.getElementById('add-error');
   const addSubmitBtn = document.getElementById('add-submit');
+  const addStartBtn = document.getElementById('add-start');
   const addCancelBtn = document.getElementById('add-cancel');
   const addCloseBtn = document.getElementById('add-close');
-  const repoSuggestionsEl = document.getElementById('repo-suggestions');
 
   // Holds the bindTimeInput handle while the modal is open so we can read
   // the parsed ms on submit and detach cleanly on reopen.
   let addDurationHandle = null;
+  // Cached lookups so we can resolve a selection back to its data after
+  // the user clicks Submit/Start without re-fetching.
+  let projectsByRepo = new Map();      // repo -> [{ id, title, number }]
+  let issuesByProject = new Map();     // projectId -> [{ number, title, repo }]
+
+  function populateRepoSelect(repos, selected) {
+    const fromSessions = [...new Set(allSessions.map((s) => s.repo))]
+      .filter((r) => /^[^/\s]+\/[^/\s]+$/.test(r));
+    const merged = [...new Set([...(repos || []), ...fromSessions])].sort();
+    addRepoSelect.innerHTML = '<option value="">Select a repo…</option>' +
+      merged.map((r) => `<option value="${escapeHtml(r)}"${r === selected ? ' selected' : ''}>${escapeHtml(r)}</option>`).join('');
+  }
+
+  function setProjectSelectState(state, projects) {
+    if (state === 'loading') {
+      addProjectSelect.innerHTML = '<option value="">Loading projects…</option>';
+      addProjectSelect.disabled = true;
+      return;
+    }
+    if (state === 'idle') {
+      addProjectSelect.innerHTML = '<option value="">Pick a repo first</option>';
+      addProjectSelect.disabled = true;
+      return;
+    }
+    if (state === 'error') {
+      addProjectSelect.innerHTML = '<option value="">(error fetching projects)</option>';
+      addProjectSelect.disabled = false;
+      return;
+    }
+    // ready
+    addProjectSelect.disabled = false;
+    addProjectSelect.innerHTML = '<option value="">No project</option>' +
+      (projects || []).map((p) =>
+        `<option value="${escapeHtml(p.id)}">${escapeHtml(p.title)}</option>`
+      ).join('');
+  }
+
+  function setIssueSelectState(state, issues) {
+    if (state === 'loading') {
+      addIssueSelect.innerHTML = '<option value="">Loading issues…</option>';
+      addIssueSelect.disabled = true;
+      return;
+    }
+    if (state === 'idle') {
+      addIssueSelect.innerHTML = '<option value="">Pick a project first</option>';
+      addIssueSelect.disabled = true;
+      return;
+    }
+    if (state === 'error') {
+      addIssueSelect.innerHTML = '<option value="">(error fetching issues)</option>';
+      addIssueSelect.disabled = false;
+      return;
+    }
+    addIssueSelect.disabled = false;
+    addIssueSelect.innerHTML = '<option value="">No issue (use title below)</option>' +
+      (issues || []).map((i) => {
+        const stateBadge = i.state === 'OPEN' ? '' : ' [closed]';
+        return `<option value="${i.number}">#${i.number} ${escapeHtml(i.title)}${stateBadge}</option>`;
+      }).join('');
+  }
+
+  async function onRepoChange() {
+    const repo = addRepoSelect.value;
+    setIssueSelectState('idle');
+    if (!repo) {
+      setProjectSelectState('idle');
+      return;
+    }
+    if (projectsByRepo.has(repo)) {
+      setProjectSelectState('ready', projectsByRepo.get(repo));
+      return;
+    }
+    setProjectSelectState('loading');
+    const resp = await sendMessage('FETCH_REPO_PROJECTS', { repo });
+    if (!resp?.ok) {
+      setProjectSelectState('error');
+      return;
+    }
+    projectsByRepo.set(repo, resp.projects);
+    setProjectSelectState('ready', resp.projects);
+  }
+
+  async function onProjectChange() {
+    const projectId = addProjectSelect.value;
+    if (!projectId) {
+      setIssueSelectState('idle');
+      return;
+    }
+    const repo = addRepoSelect.value;
+    const cacheKey = `${projectId}|${repo}`;
+    if (issuesByProject.has(cacheKey)) {
+      setIssueSelectState('ready', issuesByProject.get(cacheKey));
+      return;
+    }
+    setIssueSelectState('loading');
+    const resp = await sendMessage('FETCH_PROJECT_ISSUES', { projectId, repo });
+    if (!resp?.ok) {
+      setIssueSelectState('error');
+      return;
+    }
+    issuesByProject.set(cacheKey, resp.issues);
+    setIssueSelectState('ready', resp.issues);
+  }
+
+  function onIssueChange() {
+    // Auto-fill the title when an issue is picked so the user doesn't
+    // have to retype it. Leave it alone (don't blank) when issue is
+    // cleared — the user may have typed something custom.
+    const issueNumber = parseInt(addIssueSelect.value, 10);
+    if (!Number.isFinite(issueNumber) || issueNumber <= 0) {
+      addTitleHint.textContent = '(required when no issue is linked)';
+      return;
+    }
+    addTitleHint.textContent = '(autofilled — edit if needed)';
+    const projectId = addProjectSelect.value;
+    const repo = addRepoSelect.value;
+    const issues = issuesByProject.get(`${projectId}|${repo}`) || [];
+    const match = issues.find((i) => i.number === issueNumber);
+    if (match) addTitleInput.value = match.title;
+  }
 
   async function openAddModal() {
-    // Repo dropdown = union of (a) repos seen in previous time entries
-    // and (b) repos fetched from GitHub by FETCH_USER_REPOS (cached on
-    // settings.knownRepos). Free-text custom labels are allowed too.
-    const fromSessions = new Set(allSessions.map((s) => s.repo));
-    const { settings = {} } = await chrome.storage.local.get('settings');
-    const knownRepos = settings.knownRepos || [];
-    const repos = [...new Set([...knownRepos, ...fromSessions])].sort();
-    repoSuggestionsEl.innerHTML = repos
-      .map((r) => `<option value="${escapeHtml(r)}"></option>`)
-      .join('');
-
-    addRepoInput.value = '';
-    addIssueInput.value = '';
-    addTitleInput.value = '';
-    addDateInput.value = formatDateISO(Date.now());
     addErrorEl.textContent = '';
+    addDateInput.value = formatDateISO(Date.now());
+    addTitleInput.value = '';
+    addTitleHint.textContent = '(required when no issue is linked)';
 
     if (addDurationHandle?.detach) addDurationHandle.detach();
     addDurationInput.value = '';
     addDurationHandle = self.TaktTime.bindTimeInput(addDurationInput, { initialMs: 0 });
 
+    projectsByRepo = new Map();
+    issuesByProject = new Map();
+    setProjectSelectState('idle');
+    setIssueSelectState('idle');
+
+    // Render any repos we already know (cached on settings.knownRepos)
+    // immediately so the dropdown isn't empty on first open. Then kick a
+    // fresh fetch in parallel — when it lands we re-render the dropdown,
+    // preserving the user's current selection.
+    const { settings = {} } = await chrome.storage.local.get('settings');
+    populateRepoSelect(settings.knownRepos || []);
+    sendMessage('FETCH_USER_REPOS').then((resp) => {
+      if (!resp?.ok || addModal.hidden) return;
+      populateRepoSelect(resp.repos, addRepoSelect.value);
+    }).catch(() => {});
+
     addModal.hidden = false;
-    addRepoInput.focus();
+    addRepoSelect.focus();
   }
 
   function closeAddModal() {
@@ -500,37 +812,47 @@
     addErrorEl.textContent = msg;
   }
 
+  // Collect + validate the modal state. Returns either
+  //   { ok: true, ...fields }  for a valid form, or
+  //   { ok: false, error }     so the caller can show it.
+  function readAddForm({ requireDuration }) {
+    const repo = addRepoSelect.value;
+    if (!repo) return { ok: false, error: 'Pick a repo.' };
+
+    const issueRaw = parseInt(addIssueSelect.value, 10);
+    const issueNumber = Number.isFinite(issueRaw) && issueRaw > 0 ? issueRaw : 0;
+
+    const issueTitle = addTitleInput.value.trim();
+    if (issueNumber === 0 && !issueTitle) {
+      return { ok: false, error: 'Title is required when no issue is linked.' };
+    }
+
+    if (requireDuration) {
+      const durationMs = addDurationHandle?.getMs() ?? null;
+      if (!durationMs || durationMs <= 0) {
+        return { ok: false, error: 'Duration must be greater than zero.' };
+      }
+      const dateStr = addDateInput.value;
+      if (!dateStr) return { ok: false, error: 'Date is required.' };
+      const completedAt = new Date(`${dateStr}T17:00:00`).getTime();
+      if (!Number.isFinite(completedAt)) return { ok: false, error: 'Invalid date.' };
+      return { ok: true, repo, issueNumber, issueTitle: issueTitle || null, completedAt, durationMs };
+    }
+    return { ok: true, repo, issueNumber, issueTitle: issueTitle || null };
+  }
+
   async function submitAddEntry() {
-    const repo = addRepoInput.value.trim();
-    const issueNumber = parseInt(addIssueInput.value, 10);
-    const issueTitle = addTitleInput.value.trim() || null;
-    const dateStr = addDateInput.value;
-    const durationMs = addDurationHandle?.getMs() ?? null;
-
-    // Accept anything non-empty — could be owner/repo (issue URL/comment
-    // will be valid) or a freeform label like "client meeting" / "admin"
-    // for non-GitHub work. The repo cell renders as a GitHub link either
-    // way; for non-repo labels it'll 404 if clicked, which is the
-    // user's choice when they typed it.
-    if (!repo) return showAddError('Repo or task name is required.');
-    if (!Number.isFinite(issueNumber) || issueNumber < 1) {
-      return showAddError('Issue number is required.');
-    }
-    if (!dateStr) return showAddError('Date is required.');
-    if (!durationMs || durationMs <= 0) {
-      return showAddError('Duration must be greater than zero.');
-    }
-
-    // completed_at = chosen date at 17:00 local. started_at is derived
-    // backward from duration in the SW so the row stays internally
-    // coherent (and matches what UPDATE recomputes on edit).
-    const completedAt = new Date(`${dateStr}T17:00:00`).getTime();
-    if (!Number.isFinite(completedAt)) return showAddError('Invalid date.');
+    const form = readAddForm({ requireDuration: true });
+    if (!form.ok) return showAddError(form.error);
 
     showAddError('');
     addSubmitBtn.disabled = true;
     const resp = await sendMessage('ADD_MANUAL_SESSION', {
-      repo, issueNumber, issueTitle, completedAt, durationMs,
+      repo: form.repo,
+      issueNumber: form.issueNumber,
+      issueTitle: form.issueTitle,
+      completedAt: form.completedAt,
+      durationMs: form.durationMs,
     });
     addSubmitBtn.disabled = false;
 
@@ -542,10 +864,39 @@
     }
   }
 
+  // Start a live timer from the modal. Skips Date/Duration — the timer
+  // will accumulate its own elapsed time; the user finishes it from the
+  // popup or content-script button on the issue page (same as a STOP).
+  async function startTrackingFromModal() {
+    const form = readAddForm({ requireDuration: false });
+    if (!form.ok) return showAddError(form.error);
+
+    showAddError('');
+    addStartBtn.disabled = true;
+    const resp = await sendMessage('START', {
+      repo: form.repo,
+      issueNumber: form.issueNumber,
+      issueTitle: form.issueTitle
+        || (form.issueNumber > 0 ? `Issue #${form.issueNumber}` : 'Untitled'),
+      sourceUrl: null,
+    });
+    addStartBtn.disabled = false;
+
+    if (resp?.ok) {
+      closeAddModal();
+    } else {
+      showAddError(resp?.error || resp?.error?.message || 'Failed to start timer.');
+    }
+  }
+
   btnAdd.addEventListener('click', openAddModal);
   addCancelBtn.addEventListener('click', closeAddModal);
   addCloseBtn.addEventListener('click', closeAddModal);
   addSubmitBtn.addEventListener('click', submitAddEntry);
+  addStartBtn.addEventListener('click', startTrackingFromModal);
+  addRepoSelect.addEventListener('change', onRepoChange);
+  addProjectSelect.addEventListener('change', onProjectChange);
+  addIssueSelect.addEventListener('change', onIssueChange);
   addModal.addEventListener('click', (e) => {
     if (e.target === addModal) closeAddModal();
   });

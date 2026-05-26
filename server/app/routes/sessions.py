@@ -38,6 +38,21 @@ def get_sessions(
     )
 
 
+@router.get("/totals")
+def get_session_totals(
+    repo: str,
+    issue: int,
+    caller: Caller = Depends(get_caller),
+) -> dict:
+    """Total non-deleted duration_hours across all users for repo+issue.
+
+    Used by the extension after every create/update/delete to overwrite
+    (not increment) the linked GitHub Project Number field.
+    """
+    hours = bq.total_hours_for_issue(repo, issue)
+    return {"repo": repo, "issue_number": issue, "total_hours": hours}
+
+
 @router.put("/{session_id}", response_model=SessionOut)
 def update_session(
     session_id: str,
