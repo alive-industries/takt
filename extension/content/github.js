@@ -114,6 +114,10 @@
         background: var(--bgColor-attention-muted, #fff8c5);
       }
       .takt-btn--paused:hover { background: #fef3b4; }
+      /* Looks inactive (a timer runs elsewhere) but stays clickable so a
+         click can surface the "already active" notice. */
+      .takt-btn--blocked { opacity: 0.55; cursor: not-allowed; }
+      .takt-btn--blocked:hover { background: var(--bgColor-default, #fff); }
       .takt-stop-btn {
         display: inline-flex;
         align-items: center;
@@ -173,8 +177,12 @@
       (currentSession.repo !== issue.repo ||
         currentSession.issueNumber !== issue.issueNumber)
     ) {
+      // Not `disabled` \u2014 we keep it clickable so a click can surface the
+      // "Timer already active" notice (a disabled button swallows clicks,
+      // leaving only the hover title tooltip). data-action="BLOCKED" routes
+      // to the notice without sending a START the backend would reject.
       container.innerHTML = `
-        <button class="takt-btn" disabled title="Timer active on ${currentSession.repo}#${currentSession.issueNumber}">
+        <button class="takt-btn takt-btn--blocked" data-action="BLOCKED" title="Timer active on ${currentSession.repo}#${currentSession.issueNumber}">
           <span>\u25B6</span> Track time
         </button>
       `;
@@ -265,6 +273,15 @@
 
   function handleClick(container, issue, action) {
     switch (action) {
+      case 'BLOCKED': {
+        // A timer is already running on another issue. Show the same notice
+        // the hover tooltip carries, so a click isn't silent.
+        const ref = currentSession
+          ? `${currentSession.repo}#${currentSession.issueNumber}`
+          : 'another task';
+        showStatusMessage(container, `Timer already active on ${ref}`, 'warning', 6000);
+        break;
+      }
       case 'START': {
         const title =
           document.querySelector('[data-testid="issue-title"]')?.textContent?.trim() ||
@@ -280,6 +297,11 @@
             currentSession = resp.session;
             renderContainer(container, issue);
             startDisplayTimer(container);
+          } else if (resp?.error) {
+            // Backend rejects a second concurrent timer (one active session
+            // at a time). Surface the "Timer already active on …" message
+            // instead of letting the click do nothing.
+            showStatusMessage(container, resp.error, 'warning', 6000);
           }
         });
         break;
@@ -412,6 +434,13 @@
       dismissMs = 5000;
     }
 
+    showStatusMessage(container, text, variant, dismissMs);
+  }
+
+  // Append a transient status pill to the timer container. Shared by the
+  // sync-result display and the "timer already active" notice.
+  function showStatusMessage(container, text, variant, dismissMs) {
+    if (!text) return;
     const statusDiv = document.createElement('span');
     statusDiv.className = `takt-sync-status takt-sync-status--${variant}`;
     statusDiv.textContent = text;
