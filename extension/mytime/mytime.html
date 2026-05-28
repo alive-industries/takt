@@ -447,14 +447,19 @@
       </div>
       <div class="modal-body">
         <div class="form-row">
-          <label for="add-repo">Repo</label>
-          <select id="add-repo">
-            <option value="">Loading repos…</option>
+          <label for="add-org">Organization</label>
+          <select id="add-org">
+            <option value="">Loading orgs…</option>
           </select>
-          <div class="field-hint">Restricted to the alive-industries org.</div>
         </div>
         <div class="form-row">
-          <label for="add-project">Project <span class="muted">(optional — skip for meetings, PM, email)</span></label>
+          <label for="add-repo">Repo</label>
+          <select id="add-repo" disabled>
+            <option value="">Pick an organization first</option>
+          </select>
+        </div>
+        <div class="form-row">
+          <label for="add-project">Project <span class="muted">(optional)</span></label>
           <select id="add-project" disabled>
             <option value="">Pick a repo first</option>
           </select>

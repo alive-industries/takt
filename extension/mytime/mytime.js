@@ -445,9 +445,11 @@
     refreshActiveTimer();
     // Kick off a GitHub repo fetch in the background so the Add modal has
     // an up-to-date dropdown when the user opens it. Cached to
-    // chrome.storage.local.settings.knownRepos. Fire-and-forget — modal
+    // chrome.storage.local.settings.knownReposByOrg. Fire-and-forget — modal
     // works fine without it (falls back to previously-tracked repos).
     sendMessage('FETCH_USER_REPOS').catch(() => {});
+    // Same for the user's org list — populates the new Organization dropdown.
+    sendMessage('FETCH_USER_ORGS').catch(() => {});
   }
 
   // --- Active-timer panel ---
@@ -637,6 +639,7 @@
 
   const btnAdd = document.getElementById('btn-add');
   const addModal = document.getElementById('add-modal');
+  const addOrgSelect = document.getElementById('add-org');
   const addRepoSelect = document.getElementById('add-repo');
   const addProjectSelect = document.getElementById('add-project');
   const addIssueSelect = document.getElementById('add-issue-select');
@@ -658,12 +661,43 @@
   let projectsByRepo = new Map();      // repo -> [{ id, title, number }]
   let issuesByProject = new Map();     // projectId -> [{ number, title, repo }]
 
-  function populateRepoSelect(repos, selected) {
-    const fromSessions = [...new Set(allSessions.map((s) => s.repo))]
-      .filter((r) => /^[^/\s]+\/[^/\s]+$/.test(r));
+  function populateOrgSelect(orgs, selected) {
+    const list = [...new Set(orgs || [])].sort();
+    addOrgSelect.innerHTML = '<option value="">Select an organization…</option>' +
+      list.map((o) => `<option value="${escapeHtml(o)}"${o === selected ? ' selected' : ''}>${escapeHtml(o)}</option>`).join('');
+    addOrgSelect.disabled = list.length === 0;
+  }
+
+  function populateRepoSelect(repos, selected, org) {
+    // Historical repos from past sessions belonging to the selected org —
+    // surfaces repos the user has tracked even if the GitHub fetch hasn't
+    // returned yet (or returns nothing).
+    const fromSessions = org
+      ? [...new Set(allSessions.map((s) => s.repo))]
+          .filter((r) => /^[^/\s]+\/[^/\s]+$/.test(r) && r.startsWith(`${org}/`))
+      : [];
     const merged = [...new Set([...(repos || []), ...fromSessions])].sort();
+    if (merged.length === 0) {
+      addRepoSelect.innerHTML = '<option value="">No repos found</option>';
+      addRepoSelect.disabled = false;
+      return;
+    }
+    addRepoSelect.disabled = false;
     addRepoSelect.innerHTML = '<option value="">Select a repo…</option>' +
       merged.map((r) => `<option value="${escapeHtml(r)}"${r === selected ? ' selected' : ''}>${escapeHtml(r)}</option>`).join('');
+  }
+
+  function setRepoSelectState(state) {
+    if (state === 'loading') {
+      addRepoSelect.innerHTML = '<option value="">Loading repos…</option>';
+      addRepoSelect.disabled = true;
+    } else if (state === 'idle') {
+      addRepoSelect.innerHTML = '<option value="">Pick an organization first</option>';
+      addRepoSelect.disabled = true;
+    } else if (state === 'error') {
+      addRepoSelect.innerHTML = '<option value="">(error fetching repos)</option>';
+      addRepoSelect.disabled = false;
+    }
   }
 
   function setProjectSelectState(state, projects) {
@@ -712,6 +746,32 @@
         const stateBadge = i.state === 'OPEN' ? '' : ' [closed]';
         return `<option value="${i.number}">#${i.number} ${escapeHtml(i.title)}${stateBadge}</option>`;
       }).join('');
+  }
+
+  async function onOrgChange() {
+    const org = addOrgSelect.value;
+    // Reset the downstream cascade — the picked repo no longer applies.
+    setProjectSelectState('idle');
+    setIssueSelectState('idle');
+    if (!org) {
+      setRepoSelectState('idle');
+      return;
+    }
+    const { settings = {} } = await chrome.storage.local.get('settings');
+    const cached = settings.knownReposByOrg?.[org];
+    if (cached?.length) {
+      populateRepoSelect(cached, '', org);
+    } else {
+      setRepoSelectState('loading');
+    }
+    // Always re-fetch in the background so the list stays fresh.
+    const resp = await sendMessage('FETCH_USER_REPOS', { org });
+    if (addModal.hidden || addOrgSelect.value !== org) return;
+    if (resp?.ok) {
+      populateRepoSelect(resp.repos, addRepoSelect.value, org);
+    } else if (!cached?.length) {
+      setRepoSelectState('error');
+    }
   }
 
   async function onRepoChange() {
@@ -789,19 +849,54 @@
     setProjectSelectState('idle');
     setIssueSelectState('idle');
 
-    // Render any repos we already know (cached on settings.knownRepos)
-    // immediately so the dropdown isn't empty on first open. Then kick a
-    // fresh fetch in parallel — when it lands we re-render the dropdown,
-    // preserving the user's current selection.
+    // Render cached orgs/repos (settings.knownOrgs, settings.knownReposByOrg
+    // — falling back to legacy knownRepos for the primary Takt org) so the
+    // dropdowns aren't empty on first open. Then kick fresh fetches in
+    // parallel; when they land we re-render, preserving any user selection.
     const { settings = {} } = await chrome.storage.local.get('settings');
-    populateRepoSelect(settings.knownRepos || []);
-    sendMessage('FETCH_USER_REPOS').then((resp) => {
+    const cachedOrgs = settings.knownOrgs || [];
+    // Default selection: the primary Takt org so existing users see no
+    // behavioural change on first open.
+    const defaultOrg = cachedOrgs.includes('alive-industries')
+      ? 'alive-industries'
+      : (cachedOrgs[0] || 'alive-industries');
+    const initialOrgs = cachedOrgs.length ? cachedOrgs : [defaultOrg];
+    populateOrgSelect(initialOrgs, defaultOrg);
+    addOrgSelect.value = defaultOrg;
+
+    // Seed the repo dropdown with whatever we have cached for the default
+    // org (knownReposByOrg, falling back to the legacy knownRepos field).
+    const seededRepos =
+      settings.knownReposByOrg?.[defaultOrg]
+      || (defaultOrg === 'alive-industries' ? settings.knownRepos : null)
+      || [];
+    if (seededRepos.length) {
+      populateRepoSelect(seededRepos, '', defaultOrg);
+    } else {
+      setRepoSelectState('loading');
+    }
+
+    // Refresh orgs in the background; if new ones appear, re-populate while
+    // preserving the user's current selection.
+    sendMessage('FETCH_USER_ORGS').then((resp) => {
       if (!resp?.ok || addModal.hidden) return;
-      populateRepoSelect(resp.repos, addRepoSelect.value);
+      populateOrgSelect(resp.orgs, addOrgSelect.value || defaultOrg);
     }).catch(() => {});
 
+    // Refresh repos for the default org in the background.
+    sendMessage('FETCH_USER_REPOS', { org: defaultOrg }).then((resp) => {
+      if (addModal.hidden || addOrgSelect.value !== defaultOrg) return;
+      if (resp?.ok) {
+        populateRepoSelect(resp.repos, addRepoSelect.value, defaultOrg);
+      } else if (!seededRepos.length) {
+        setRepoSelectState('error');
+      }
+    }).catch(() => {
+      if (!addModal.hidden && !seededRepos.length) setRepoSelectState('error');
+    });
+
     addModal.hidden = false;
-    addRepoSelect.focus();
+    addOrgSelect.focus();
   }
 
   function closeAddModal() {
@@ -894,6 +989,7 @@
   addCloseBtn.addEventListener('click', closeAddModal);
   addSubmitBtn.addEventListener('click', submitAddEntry);
   addStartBtn.addEventListener('click', startTrackingFromModal);
+  addOrgSelect.addEventListener('change', onOrgChange);
   addRepoSelect.addEventListener('change', onRepoChange);
   addProjectSelect.addEventListener('change', onProjectChange);
   addIssueSelect.addEventListener('change', onIssueChange);

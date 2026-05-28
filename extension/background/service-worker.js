@@ -6,6 +6,8 @@ import {
   fetchOrgRepos,
   fetchRepoProjects,
   fetchProjectIssues,
+  fetchUserOrgs,
+  TAKT_ORG,
 } from './github-api.js';
 import { enqueueSession, flushQueue, queueLength } from './sync-queue.js';
 import {
@@ -503,20 +505,44 @@ async function handleMessage({ action, payload }) {
     }
 
     case 'FETCH_USER_REPOS': {
-      // Pulls alive-industries repos from GitHub and caches them under
-      // settings.knownRepos so the My Time "Add entry" picker can render
-      // instantly without a round-trip per open. Personal repos are
-      // deliberately excluded — Takt is scoped to the org.
+      // Pulls org repos from GitHub and caches them under
+      // settings.knownReposByOrg[org] so the My Time "Add entry" picker can
+      // render instantly without a round-trip per open. Defaults to the
+      // primary Takt org for backward compat. Personal repos are
+      // deliberately excluded — Takt is scoped to orgs.
+      const { settings = {} } = await chrome.storage.local.get('settings');
+      if (!settings.pat) {
+        return { ok: false, error: { code: 'no_pat', message: 'No PAT configured' } };
+      }
+      const org = payload?.org || TAKT_ORG;
+      try {
+        const repos = await fetchOrgRepos(settings.pat, org);
+        const knownReposByOrg = { ...(settings.knownReposByOrg || {}), [org]: repos };
+        const next = { ...settings, knownReposByOrg };
+        // Mirror the primary-org list into the legacy `knownRepos` field so
+        // older surfaces that still read it keep working.
+        if (org === TAKT_ORG) next.knownRepos = repos;
+        await chrome.storage.local.set({ settings: next });
+        return { ok: true, org, repos };
+      } catch (err) {
+        return { ok: false, error: { code: 'fetch_failed', message: err.message } };
+      }
+    }
+
+    case 'FETCH_USER_ORGS': {
+      // Lists GitHub orgs the PAT user belongs to so the Add-entry modal can
+      // populate its Organization dropdown. Cached on settings.knownOrgs so
+      // the modal opens without waiting on the network.
       const { settings = {} } = await chrome.storage.local.get('settings');
       if (!settings.pat) {
         return { ok: false, error: { code: 'no_pat', message: 'No PAT configured' } };
       }
       try {
-        const repos = await fetchOrgRepos(settings.pat);
+        const orgs = await fetchUserOrgs(settings.pat);
         await chrome.storage.local.set({
-          settings: { ...settings, knownRepos: repos },
+          settings: { ...settings, knownOrgs: orgs },
         });
-        return { ok: true, repos };
+        return { ok: true, orgs };
       } catch (err) {
         return { ok: false, error: { code: 'fetch_failed', message: err.message } };
       }
