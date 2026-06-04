@@ -48,14 +48,22 @@ function isPermanentError(err) {
   return false;
 }
 
-// Attempt to flush the queue. Returns { processed, remaining, errors }.
+// Attempt to flush the queue. Returns { processed, remaining, errors, drained }.
+//
+// `drained` is the list of (repo, issue_number) pairs whose sessions were
+// successfully pushed in this run. The service worker uses it to recompute
+// the corresponding GitHub Project field values — once the row lands in
+// BigQuery the authoritative total has changed, and the project field
+// needs to track that whether the push happened immediately (STOP path)
+// or after a retry delay (this path).
 export async function flushQueue() {
   const queue = await loadQueue();
-  if (queue.length === 0) return { processed: 0, remaining: 0, errors: [] };
+  if (queue.length === 0) return { processed: 0, remaining: 0, errors: [], drained: [] };
 
   const now = Date.now();
   const remaining = [];
   const errors = [];
+  const drained = [];
   let processed = 0;
 
   for (const item of queue) {
@@ -68,6 +76,10 @@ export async function flushQueue() {
       if (item.kind === 'session') {
         await pushSession(item.payload);
         processed += 1;
+        drained.push({
+          repo: item.payload.repo,
+          issueNumber: item.payload.issue_number,
+        });
       } else {
         // Unknown kind — drop it.
         console.warn('[Takt] dropping unknown queue item kind:', item.kind);
@@ -86,7 +98,7 @@ export async function flushQueue() {
   }
 
   await saveQueue(remaining);
-  return { processed, remaining: remaining.length, errors };
+  return { processed, remaining: remaining.length, errors, drained };
 }
 
 export async function clearQueue() {

@@ -246,6 +246,47 @@ def _get_session(
     return SessionOut(**dict(rows[0])) if rows else None
 
 
+def total_hours_for_issue(repo: str, issue_number: int) -> float:
+    """Sum of session time across all non-deleted sessions for repo+issue.
+
+    Computed from `duration_ms` (the exact wall-clock measurement) and
+    converted to hours at the end. We deliberately do NOT sum
+    `duration_hours` — that column is quarter-hour rounded per row by the
+    client, so short sessions (e.g. 3 minutes) get stored as 0 and would
+    disappear from the total. Summing the underlying ms avoids that loss.
+
+    The extension calls this after every create/update/delete and writes
+    the result (not a delta) to the linked GitHub Projects v2 Number
+    field, so the project field stays in sync with edits and deletes —
+    not just the additive STOP path.
+
+    Sum is across all users: the project field is org-wide, not per-user.
+    issue_number=0 is the manual-entry sentinel (no linked issue) and
+    never contributes, so we short-circuit.
+    """
+    if issue_number <= 0:
+        return 0.0
+    s = get_settings()
+    sql = f"""
+        SELECT IFNULL(SUM(duration_ms), 0) / 3600000.0 AS total
+        FROM `{s.sessions_table}`
+        WHERE repo = @repo
+          AND issue_number = @issue_number
+          AND deleted_at IS NULL
+    """
+    params = [
+        bigquery.ScalarQueryParameter("repo", "STRING", repo),
+        bigquery.ScalarQueryParameter("issue_number", "INT64", issue_number),
+    ]
+    job = _client().query(
+        sql, job_config=bigquery.QueryJobConfig(query_parameters=params)
+    )
+    rows = list(job.result())
+    if not rows or rows[0].total is None:
+        return 0.0
+    return float(rows[0].total)
+
+
 def soft_delete_session(session_id: str, *, caller_login: str, is_admin: bool) -> bool:
     s = get_settings()
     where = ["session_id = @id", "deleted_at IS NULL"]
