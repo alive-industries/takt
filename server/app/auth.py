@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from datetime import UTC, datetime
 
 from fastapi import Depends, Header
 
@@ -49,14 +50,19 @@ async def get_caller(
     pat = await _extract_pat(authorization)
     user = await gh.resolve_user(pat)
 
+    # The caller's live GitHub org role: "admin" (org owner), "member", or None
+    # (not an active member / undeterminable — e.g. PAT lacks read:org).
+    org_role = await gh.get_org_role(pat, user)
+
     member = bq.get_member(user.login)
     if member is None:
-        # Auto-admit if user is in the GitHub org (requires read:org scope on PAT)
-        if await gh.is_org_member(pat, user):
+        # Auto-admit GitHub org members. Org owners are seeded as Takt admins,
+        # which bootstraps the admin UI without a pre-existing admin.
+        if org_role is not None:
             member = Member(
                 github_login=user.login,
                 github_user_id=user.id,
-                role="member",
+                role="admin" if org_role == "admin" else "member",
                 status="active",
                 source="org",
                 added_by="auto",
@@ -66,6 +72,15 @@ async def get_caller(
             raise NotAuthorised(
                 "You are not approved to use Takt. Ask an admin to add you."
             )
+    elif member.source == "org" and org_role in ("admin", "member"):
+        # Keep org-sourced roles in sync with GitHub ownership (promote on
+        # gaining ownership, demote on losing it). Manual rows (source="manual")
+        # are left untouched, and an inconclusive org_role (None) never demotes.
+        desired = "admin" if org_role == "admin" else "member"
+        if member.role != desired:
+            member.role = desired
+            member.updated_at = datetime.now(UTC)
+            bq.upsert_member(member)
 
     if member.status == "revoked":
         raise NotAuthorised("Your access has been revoked.")

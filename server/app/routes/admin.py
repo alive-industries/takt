@@ -40,7 +40,10 @@ def upsert_member(update: MemberUpdate, caller: Caller = Depends(require_admin))
         github_user_id=existing.github_user_id if existing else None,
         role=update.role or (existing.role if existing else "member"),
         status=update.status or (existing.status if existing else "active"),
-        source=existing.source if existing else "manual",
+        # A manual edit always marks the row "manual" so get_caller's live
+        # org-role sync leaves it alone — otherwise the next login would clobber
+        # an admin's promotion/demotion of an org-sourced member.
+        source="manual",
         added_by=existing.added_by if existing else caller.user.login,
         added_at=existing.added_at if existing else datetime.now(UTC),
         updated_at=datetime.now(UTC),

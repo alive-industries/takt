@@ -35,7 +35,9 @@ class GitHubClient:
         self._user_cache: TTLCache[str, GitHubUser] = TTLCache(
             maxsize=2048, ttl=settings.pat_cache_ttl
         )
-        self._org_cache: TTLCache[tuple[int, str], bool] = TTLCache(
+        # Caches the caller's org role: "admin" (owner), "member", or None
+        # (not an active member / undeterminable). is_org_member derives from it.
+        self._org_cache: TTLCache[tuple[int, str], str | None] = TTLCache(
             maxsize=2048, ttl=settings.org_membership_cache_ttl
         )
         self._client = httpx.AsyncClient(timeout=10.0)
@@ -74,30 +76,51 @@ class GitHubClient:
         self._user_cache[key] = user
         return user
 
-    async def is_org_member(self, pat: str, user: GitHubUser, org: str | None = None) -> bool:
-        """Check whether `user` is a member of `org` using their own PAT.
+    async def get_org_role(
+        self, pat: str, user: GitHubUser, org: str | None = None
+    ) -> str | None:
+        """Return the caller's role in `org`: "admin" (org owner), "member", or
+        None.
 
-        Requires the PAT to have the `read:org` scope. If the PAT lacks the
-        scope GitHub returns 404, which we treat as 'unknown' = False — the
-        admin can still add the user manually.
+        Uses the caller's own PAT against `GET /user/memberships/orgs/{org}`,
+        which reports the authenticated user's membership without needing org
+        admin privileges. GitHub labels org *owners* as role "admin".
+
+        None means "not an active member or undeterminable": a 404 (not a
+        member), a non-active membership state (e.g. a pending invite), a 403
+        (PAT lacks `read:org`), or a transport error. Callers must treat None
+        as inconclusive and never demote an existing member on its basis.
         """
         org = org or self._org
         cache_key = (user.id, org)
         cached = self._org_cache.get(cache_key)
-        if cached is not None:
+        if cache_key in self._org_cache:
             return cached
 
-        url = f"{self._base}/orgs/{org}/members/{user.login}"
+        url = f"{self._base}/user/memberships/orgs/{org}"
         try:
             resp = await self._client.get(url, headers=self._headers(pat))
         except httpx.HTTPError as e:
             log.warning("github org membership check failed: %s", e)
-            return False
+            return None
 
-        # 204 = member, 302 = requester not a member, 404 = user not a member
-        is_member = resp.status_code == 204
-        self._org_cache[cache_key] = is_member
-        return is_member
+        role: str | None = None
+        if resp.status_code == 200:
+            data = resp.json()
+            if data.get("state") == "active":
+                role = data.get("role")  # "admin" (owner) | "member"
+        # 403 (missing scope), 404 (not a member), other → role stays None.
+        self._org_cache[cache_key] = role
+        return role
+
+    async def is_org_member(self, pat: str, user: GitHubUser, org: str | None = None) -> bool:
+        """Whether `user` is an active member of `org` (any role).
+
+        Requires the PAT to have the `read:org` scope; a PAT lacking it yields
+        a 403 which we treat as 'unknown' = False — an admin can still add the
+        user manually.
+        """
+        return await self.get_org_role(pat, user, org) is not None
 
 
 _singleton: GitHubClient | None = None

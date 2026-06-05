@@ -106,6 +106,134 @@ def test_org_config_update_rejects_unknown_fields() -> None:
         assert resp.status_code in (401, 422)
 
 
+# --- Admin role derived from GitHub org ownership ---
+
+
+class _FakeGH:
+    """Stand-in GitHub client for auth tests. `org_role` is what
+    get_org_role/is_org_member report: "admin" (owner), "member", or None.
+    """
+
+    def __init__(self, org_role: str | None, login: str = "octo", uid: int = 1) -> None:
+        self._role = org_role
+        self._login = login
+        self._uid = uid
+
+    async def resolve_user(self, pat):  # noqa: ANN001
+        from app.models import GitHubUser
+
+        return GitHubUser(login=self._login, id=self._uid)
+
+    async def get_org_role(self, pat, user, org=None):  # noqa: ANN001
+        return self._role
+
+    async def is_org_member(self, pat, user, org=None):  # noqa: ANN001
+        return self._role is not None
+
+
+def _auth_client(monkeypatch, *, org_role, existing):
+    """TestClient wired so get_caller sees `existing` (a Member or None) and the
+    given GitHub `org_role`. Returns (client, upserts, headers); `headers`
+    carries the bearer token plus the X-Takt-Api-Key when one is configured
+    (the gate is orthogonal to what these tests exercise). `upserts` captures
+    every Member written via bq.upsert_member.
+    """
+    from app.config import get_settings
+    from app.models import Member
+    from app.services import bq
+    from app.services.github import get_github_client
+
+    upserts: list[Member] = []
+    monkeypatch.setattr(bq, "get_member", lambda login: existing)
+    monkeypatch.setattr(bq, "upsert_member", lambda m: upserts.append(m))
+
+    app.dependency_overrides[get_github_client] = lambda: _FakeGH(org_role)
+    client = TestClient(app)
+    headers = {"Authorization": "Bearer x"}
+    api_key = get_settings().api_key
+    if api_key:
+        headers["X-Takt-Api-Key"] = api_key
+    return client, upserts, headers
+
+
+def _member(role: str, source: str, status: str = "active"):
+    from app.models import Member
+
+    return Member(github_login="octo", github_user_id=1, role=role, status=status, source=source)
+
+
+def test_new_org_owner_becomes_admin(monkeypatch) -> None:
+    client, upserts, headers = _auth_client(monkeypatch, org_role="admin", existing=None)
+    try:
+        resp = client.get("/v1/me", headers=headers)
+        assert resp.status_code == 200
+        assert resp.json()["role"] == "admin"
+        assert len(upserts) == 1 and upserts[0].role == "admin" and upserts[0].source == "org"
+    finally:
+        app.dependency_overrides.clear()
+
+
+def test_new_org_member_becomes_member(monkeypatch) -> None:
+    client, upserts, headers = _auth_client(monkeypatch, org_role="member", existing=None)
+    try:
+        resp = client.get("/v1/me", headers=headers)
+        assert resp.status_code == 200
+        assert resp.json()["role"] == "member"
+        assert upserts[0].role == "member"
+    finally:
+        app.dependency_overrides.clear()
+
+
+def test_non_member_is_not_authorised(monkeypatch) -> None:
+    client, upserts, headers = _auth_client(monkeypatch, org_role=None, existing=None)
+    try:
+        resp = client.get("/v1/me", headers=headers)
+        assert resp.status_code == 403
+        assert resp.json()["detail"]["code"] == "not_authorised"
+        assert upserts == []
+    finally:
+        app.dependency_overrides.clear()
+
+
+def test_org_member_promoted_when_ownership_gained(monkeypatch) -> None:
+    client, upserts, headers = _auth_client(
+        monkeypatch, org_role="admin", existing=_member("member", "org")
+    )
+    try:
+        resp = client.get("/v1/me", headers=headers)
+        assert resp.status_code == 200
+        assert resp.json()["role"] == "admin"
+        assert len(upserts) == 1 and upserts[0].role == "admin"
+    finally:
+        app.dependency_overrides.clear()
+
+
+def test_manual_admin_not_demoted(monkeypatch) -> None:
+    client, upserts, headers = _auth_client(
+        monkeypatch, org_role="member", existing=_member("admin", "manual")
+    )
+    try:
+        resp = client.get("/v1/me", headers=headers)
+        assert resp.status_code == 200
+        assert resp.json()["role"] == "admin"  # manual override preserved
+        assert upserts == []  # no sync write
+    finally:
+        app.dependency_overrides.clear()
+
+
+def test_inconclusive_org_role_leaves_member_unchanged(monkeypatch) -> None:
+    client, upserts, headers = _auth_client(
+        monkeypatch, org_role=None, existing=_member("admin", "org")
+    )
+    try:
+        resp = client.get("/v1/me", headers=headers)
+        assert resp.status_code == 200
+        assert resp.json()["role"] == "admin"  # not demoted on inconclusive lookup
+        assert upserts == []
+    finally:
+        app.dependency_overrides.clear()
+
+
 def test_api_key_gate(monkeypatch) -> None:
     """When TAKT_API_KEY is set, /v1/* requires a matching X-Takt-Api-Key."""
     import app.config as config_module

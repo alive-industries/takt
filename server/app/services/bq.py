@@ -74,12 +74,12 @@ def insert_session(row: SessionIn, *, github_user: str, github_user_id: int) -> 
         USING (SELECT @session_id AS session_id) S
         ON T.session_id = S.session_id
         WHEN NOT MATCHED THEN INSERT (
-            session_id, github_user, github_user_id, repo, issue_number,
+            session_id, github_user, github_user_id, project, repo, issue_number,
             issue_title, issue_url, started_at, completed_at, duration_ms,
             duration_hours, source_url, synced_to_project, project_titles,
             takt_version, client_ts, inserted_at
         ) VALUES (
-            @session_id, @github_user, @github_user_id, @repo, @issue_number,
+            @session_id, @github_user, @github_user_id, @project, @repo, @issue_number,
             @issue_title, @issue_url, @started_at, @completed_at, @duration_ms,
             @duration_hours, @source_url, @synced_to_project, @project_titles,
             @takt_version, @client_ts, CURRENT_TIMESTAMP()
@@ -89,7 +89,10 @@ def insert_session(row: SessionIn, *, github_user: str, github_user_id: int) -> 
         bigquery.ScalarQueryParameter("session_id", "STRING", row.session_id),
         bigquery.ScalarQueryParameter("github_user", "STRING", github_user),
         bigquery.ScalarQueryParameter("github_user_id", "INT64", github_user_id),
-        bigquery.ScalarQueryParameter("repo", "STRING", row.repo),
+        bigquery.ScalarQueryParameter("project", "STRING", row.project),
+        # Coerce a missing repo to "" — older sessions tables created `repo`
+        # NOT NULL and BigQuery can't drop that constraint via DDL.
+        bigquery.ScalarQueryParameter("repo", "STRING", row.repo or ""),
         bigquery.ScalarQueryParameter("issue_number", "INT64", row.issue_number),
         bigquery.ScalarQueryParameter("issue_title", "STRING", row.issue_title),
         bigquery.ScalarQueryParameter("issue_url", "STRING", row.issue_url),
@@ -372,13 +375,22 @@ def get_org_config() -> OrgConfig:
     rows = list(bq.query(sql, job_config=bigquery.QueryJobConfig(query_parameters=params)).result())
     if not rows:
         return OrgConfig(org_login=s.github_org)
+    import json
+
     row = dict(rows[0])
     # project_fields stored as JSON
     pf = row.get("project_fields")
     if isinstance(pf, str):
-        import json
-
         row["project_fields"] = json.loads(pf) if pf else {}
+    # project_repos stored as JSON: {projectLabel: [repo, ...]}
+    pr = row.get("project_repos")
+    if isinstance(pr, str):
+        row["project_repos"] = json.loads(pr) if pr else {}
+    elif pr is None:
+        row["project_repos"] = {}
+    # `projects` is a recently-added column; legacy rows return NULL.
+    if row.get("projects") is None:
+        row["projects"] = []
     return OrgConfig(**row)
 
 
@@ -398,6 +410,10 @@ def update_org_config(update: OrgConfigUpdate, *, updated_by: str) -> OrgConfig:
         patch["project_fields"] = update.project_fields
     if update.excluded_projects is not None:
         patch["excluded_projects"] = update.excluded_projects
+    if update.projects is not None:
+        patch["projects"] = update.projects
+    if update.project_repos is not None:
+        patch["project_repos"] = update.project_repos
     merged = current.model_copy(update=patch)
 
     bq = _client()
@@ -409,14 +425,16 @@ def update_org_config(update: OrgConfigUpdate, *, updated_by: str) -> OrgConfig:
             default_field_name = @default_field_name,
             project_fields = @project_fields,
             excluded_projects = @excluded_projects,
+            projects = @projects,
+            project_repos = @project_repos,
             updated_by = @updated_by,
             updated_at = CURRENT_TIMESTAMP()
         WHEN NOT MATCHED THEN INSERT
             (org_login, default_field_name, project_fields, excluded_projects,
-             updated_by, updated_at)
+             projects, project_repos, updated_by, updated_at)
         VALUES
             (@org, @default_field_name, @project_fields, @excluded_projects,
-             @updated_by, CURRENT_TIMESTAMP())
+             @projects, @project_repos, @updated_by, CURRENT_TIMESTAMP())
     """
     params = [
         bigquery.ScalarQueryParameter("org", "STRING", s.github_org),
@@ -426,6 +444,10 @@ def update_org_config(update: OrgConfigUpdate, *, updated_by: str) -> OrgConfig:
         ),
         bigquery.ArrayQueryParameter(
             "excluded_projects", "STRING", merged.excluded_projects
+        ),
+        bigquery.ArrayQueryParameter("projects", "STRING", merged.projects),
+        bigquery.ScalarQueryParameter(
+            "project_repos", "STRING", json.dumps(merged.project_repos)
         ),
         bigquery.ScalarQueryParameter("updated_by", "STRING", updated_by),
     ]
