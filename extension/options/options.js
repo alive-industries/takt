@@ -2,7 +2,11 @@
   'use strict';
 
   const patInput = document.getElementById('pat');
+  const backendUrlInput = document.getElementById('backend-url');
+  const apiKeyInput = document.getElementById('api-key');
+  const backendStatusPip = document.getElementById('backend-status-pip');
   const btnValidate = document.getElementById('btn-validate');
+  const btnBackfill = document.getElementById('btn-backfill');
   const statusEl = document.getElementById('status');
   const projectsSection = document.getElementById('projects-section');
   const projectsList = document.getElementById('projects-list');
@@ -26,7 +30,79 @@
   chrome.storage.local.get('settings', ({ settings }) => {
     if (settings) {
       patInput.value = settings.pat || '';
+      backendUrlInput.value = settings.backendUrl || 'http://localhost:8000';
+      apiKeyInput.value = settings.apiKey || '';
+    } else {
+      backendUrlInput.value = 'http://localhost:8000';
     }
+    refreshBackendStatus();
+  });
+
+  // Save both backend URL and API key together. Avoids the race where blur
+  // doesn't fire (e.g. paste then click another tab) and gives the user
+  // explicit confirmation that the values were stored.
+  const btnSaveBackend = document.getElementById('btn-save-backend');
+  const backendSaveStatus = document.getElementById('backend-save-status');
+  btnSaveBackend.addEventListener('click', async () => {
+    btnSaveBackend.disabled = true;
+    showStatus(backendSaveStatus, 'saving…', 'loading');
+    const url = backendUrlInput.value.trim().replace(/\/+$/, '');
+    const apiKey = apiKeyInput.value.trim();
+    const { settings: existing } = await chrome.storage.local.get('settings');
+    await chrome.storage.local.set({
+      settings: { ...existing, backendUrl: url, apiKey },
+    });
+    showStatus(backendSaveStatus, 'Saved', 'success');
+    setTimeout(() => showStatus(backendSaveStatus, '', ''), 2500);
+    btnSaveBackend.disabled = false;
+    refreshBackendStatus();
+  });
+
+  function setPip(text, color) {
+    backendStatusPip.innerHTML =
+      `<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${color};margin-right:4px;vertical-align:middle;"></span>` +
+      `<span style="color:${color};">${text}</span>`;
+  }
+
+  async function refreshBackendStatus() {
+    setPip('checking…', '#656d76');
+    const resp = await sendMessage('BACKEND_PING');
+    const adminLinkField = document.getElementById('admin-link-field');
+    if (resp?.ok) {
+      const me = resp.me || {};
+      const role = me.role === 'admin' ? ' (admin)' : '';
+      setPip(`connected as ${me.login}${role}`, '#1a7f37');
+      if (adminLinkField) {
+        adminLinkField.style.display = me.role === 'admin' ? '' : 'none';
+      }
+    } else {
+      const code = resp?.error?.code || 'error';
+      const msg = resp?.error?.message || 'unreachable';
+      setPip(`${code}: ${msg}`, '#d1242f');
+      if (adminLinkField) adminLinkField.style.display = 'none';
+    }
+  }
+
+  document.getElementById('admin-link').addEventListener('click', (e) => {
+    e.preventDefault();
+    chrome.tabs.create({ url: chrome.runtime.getURL('admin/admin.html') });
+  });
+
+  btnBackfill.addEventListener('click', async () => {
+    btnBackfill.disabled = true;
+    showStatus(statusEl, 'Backfilling local sessions to backend…', 'loading');
+    const resp = await sendMessage('BACKFILL_LOCAL');
+    if (resp?.ok) {
+      showStatus(
+        statusEl,
+        `Queued ${resp.queued}; pushed ${resp.flushed?.processed ?? 0}; ${resp.flushed?.remaining ?? 0} retrying.`,
+        'success'
+      );
+    } else {
+      showStatus(statusEl, `Backfill failed: ${resp?.error || 'unknown'}`, 'error');
+    }
+    btnBackfill.disabled = false;
+    refreshBackendStatus();
   });
 
   // --- Validate & fetch projects ---

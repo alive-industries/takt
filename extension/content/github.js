@@ -114,6 +114,10 @@
         background: var(--bgColor-attention-muted, #fff8c5);
       }
       .takt-btn--paused:hover { background: #fef3b4; }
+      /* Looks inactive (a timer runs elsewhere) but stays clickable so a
+         click can surface the "already active" notice. */
+      .takt-btn--blocked { opacity: 0.55; cursor: not-allowed; }
+      .takt-btn--blocked:hover { background: var(--bgColor-default, #fff); }
       .takt-stop-btn {
         display: inline-flex;
         align-items: center;
@@ -173,8 +177,12 @@
       (currentSession.repo !== issue.repo ||
         currentSession.issueNumber !== issue.issueNumber)
     ) {
+      // Not `disabled` \u2014 we keep it clickable so a click can surface the
+      // "Timer already active" notice (a disabled button swallows clicks,
+      // leaving only the hover title tooltip). data-action="BLOCKED" routes
+      // to the notice without sending a START the backend would reject.
       container.innerHTML = `
-        <button class="takt-btn" disabled title="Timer active on ${currentSession.repo}#${currentSession.issueNumber}">
+        <button class="takt-btn takt-btn--blocked" data-action="BLOCKED" title="Timer active on ${currentSession.repo}#${currentSession.issueNumber}">
           <span>\u25B6</span> Track time
         </button>
       `;
@@ -265,6 +273,15 @@
 
   function handleClick(container, issue, action) {
     switch (action) {
+      case 'BLOCKED': {
+        // A timer is already running on another issue. Show the same notice
+        // the hover tooltip carries, so a click isn't silent.
+        const ref = currentSession
+          ? `${currentSession.repo}#${currentSession.issueNumber}`
+          : 'another task';
+        showStatusMessage(container, `Timer already active on ${ref}`, 'warning', 6000);
+        break;
+      }
       case 'START': {
         const title =
           document.querySelector('[data-testid="issue-title"]')?.textContent?.trim() ||
@@ -274,11 +291,17 @@
           repo: issue.repo,
           issueNumber: issue.issueNumber,
           issueTitle: title,
+          sourceUrl: window.location.href,
         }).then((resp) => {
           if (resp?.ok) {
             currentSession = resp.session;
             renderContainer(container, issue);
             startDisplayTimer(container);
+          } else if (resp?.error) {
+            // Backend rejects a second concurrent timer (one active session
+            // at a time). Surface the "Timer already active on …" message
+            // instead of letting the click do nothing.
+            showStatusMessage(container, resp.error, 'warning', 6000);
           }
         });
         break;
@@ -308,24 +331,6 @@
 
   // --- Manual time edit (double-click) ---
 
-  function parseTimeString(str) {
-    // Accept HH:MM:SS, H:MM:SS, MM:SS, or just minutes as a number
-    str = str.trim();
-    const hms = str.match(/^(\d{1,2}):(\d{2}):(\d{2})$/);
-    if (hms) {
-      return (parseInt(hms[1]) * 3600 + parseInt(hms[2]) * 60 + parseInt(hms[3])) * 1000;
-    }
-    const ms = str.match(/^(\d{1,2}):(\d{2})$/);
-    if (ms) {
-      return (parseInt(ms[1]) * 60 + parseInt(ms[2])) * 1000;
-    }
-    const num = parseFloat(str);
-    if (!isNaN(num)) {
-      return num * 60 * 1000; // treat bare number as minutes
-    }
-    return null;
-  }
-
   function showTimeEditor(container, issue) {
     if (!currentSession) return;
     const elapsed = computeElapsed(currentSession);
@@ -337,9 +342,8 @@
     const input = document.createElement('input');
     input.type = 'text';
     input.className = 'takt-time-input';
-    input.value = formatElapsed(elapsed);
     input.placeholder = 'HH:MM:SS';
-    input.title = 'Enter time as HH:MM:SS, MM:SS, or minutes';
+    input.title = 'Type digits — last 2 = seconds, next 2 = minutes (e.g. 3000 = 30 min)';
 
     // Pause display updates while editing
     stopDisplayTimer();
@@ -353,14 +357,16 @@
       btn.appendChild(input);
     }
 
+    // Shared digit-buffer behaviour. Loaded as a content script via
+    // manifest, so window.TaktTime is in our isolated world.
+    const handle = self.TaktTime.bindTimeInput(input, { initialMs: elapsed });
     input.focus();
-    input.select();
 
     let committed = false;
     function commitEdit() {
       if (committed) return;
       committed = true;
-      const ms = parseTimeString(input.value);
+      const ms = handle.getMs();
       if (ms !== null) {
         sendMessage('SET_TIME', { ms }).then((resp) => {
           if (resp?.ok) {
@@ -428,6 +434,13 @@
       dismissMs = 5000;
     }
 
+    showStatusMessage(container, text, variant, dismissMs);
+  }
+
+  // Append a transient status pill to the timer container. Shared by the
+  // sync-result display and the "timer already active" notice.
+  function showStatusMessage(container, text, variant, dismissMs) {
+    if (!text) return;
     const statusDiv = document.createElement('span');
     statusDiv.className = `takt-sync-status takt-sync-status--${variant}`;
     statusDiv.textContent = text;

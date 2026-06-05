@@ -1,0 +1,38 @@
+[project]
+name = "takt-api"
+version = "0.1.0"
+description = "Backend API for Takt time tracker — verifies GitHub PATs and writes to BigQuery."
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.30.0",
+    "google-cloud-bigquery>=3.25.0",
+    "httpx>=0.27.0",
+    "pydantic>=2.8.0",
+    "pydantic-settings>=2.4.0",
+    "cachetools>=5.5.0",
+    "python-json-logger>=2.0.7",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3.0",
+    "pytest-asyncio>=0.24.0",
+    "ruff>=0.6.0",
+    "pyright>=1.1.380",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "N", "SIM"]
+# B008: Depends() in defaults is the canonical FastAPI pattern.
+# N818: We prefer concise exception names (InvalidPAT, NotFound) over the *Error suffix.
+ignore = ["B008", "N818"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+pythonpath = ["."]

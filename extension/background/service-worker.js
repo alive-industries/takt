@@ -1,26 +1,50 @@
-import { syncToGitHub, postTimeComment, fetchAllProjects, fetchProjectNumberFields } from './github-api.js';
+import {
+  syncIssueTimeToProjects,
+  postTimeComment,
+  fetchAllProjects,
+  fetchProjectNumberFields,
+  fetchOrgRepos,
+  fetchRepoProjects,
+  fetchProjectIssues,
+  fetchUserOrgs,
+  TAKT_ORG,
+} from './github-api.js';
+import { enqueueSession, flushQueue, queueLength } from './sync-queue.js';
+import {
+  pushSession,
+  ping as pingBackend,
+  listSessions as listBackendSessions,
+  updateSession as updateBackendSession,
+  deleteSession as deleteBackendSession,
+  listMembers as listBackendMembers,
+  upsertMember as upsertBackendMember,
+  getOrgConfig as getBackendOrgConfig,
+  putOrgConfig as putBackendOrgConfig,
+  getSessionTotals,
+} from './takt-api.js';
+import * as cache from './local-store.js';
 
 const ALARM_NAME = 'takt-tick';
-const MAX_COMPLETED = 50;
+const TAKT_VERSION = chrome.runtime.getManifest().version;
 
 // --- State helpers ---
 
 async function getState() {
-  const { activeSession = null, completedSessions = [] } =
-    await chrome.storage.local.get(['activeSession', 'completedSessions']);
-  return { activeSession, completedSessions };
+  const { activeSession = null } =
+    await chrome.storage.local.get(['activeSession']);
+  return { activeSession };
 }
 
 async function saveSession(activeSession) {
   await chrome.storage.local.set({ activeSession });
 }
 
-async function pushCompleted(session, completedSessions) {
-  completedSessions.unshift(session);
-  if (completedSessions.length > MAX_COMPLETED) {
-    completedSessions.length = MAX_COMPLETED;
-  }
-  await chrome.storage.local.set({ completedSessions });
+// Read legacy completedSessions[] for one-shot operations like backfill.
+// New sessions are written into the cache only (see local-store.js).
+async function getLegacyCompleted() {
+  const { completedSessions = [] } =
+    await chrome.storage.local.get(['completedSessions']);
+  return completedSessions;
 }
 
 function computeElapsed(session) {
@@ -28,6 +52,140 @@ function computeElapsed(session) {
   const running =
     session.status === 'running' ? Date.now() - session.startedAt : 0;
   return session.accumulatedMs + running;
+}
+
+// --- Backend payload shaping ---
+
+function toBackendSession(completed, syncResult) {
+  // Map our internal completed-session shape to the wire format the
+  // FastAPI backend expects (see server/app/models.py SessionIn).
+  const repo = completed.repo;
+  const issueNumber = completed.issueNumber;
+  // issueNumber=0 is the manual-entry sentinel (no linked issue) — don't
+  // synthesise a `.../issues/0` URL that would 404 on click. Non-GitHub
+  // repo labels (e.g. "client meeting") get the same treatment.
+  const isGh = /^[^/\s]+\/[^/\s]+$/.test(repo || '');
+  const issueUrl = (isGh && issueNumber > 0)
+    ? `https://github.com/${repo}/issues/${issueNumber}` : null;
+  const projectTitles = (syncResult?.results || [])
+    .filter((r) => r.synced)
+    .map((r) => r.project);
+  const syncedToProject = projectTitles.length > 0;
+  const durationHours = Math.round((completed.durationMs / 3600000) * 4) / 4;
+
+  return {
+    session_id: completed.sessionId,
+    repo,
+    issue_number: issueNumber,
+    issue_title: completed.issueTitle || null,
+    issue_url: issueUrl,
+    started_at: new Date(completed.startedAtMs).toISOString(),
+    completed_at: new Date(completed.completedAt).toISOString(),
+    duration_ms: completed.durationMs,
+    duration_hours: durationHours,
+    source_url: completed.sourceUrl || null,
+    synced_to_project: syncedToProject,
+    project_titles: projectTitles,
+    takt_version: TAKT_VERSION,
+    client_ts: new Date().toISOString(),
+  };
+}
+
+// Deterministic UUID-shaped id for legacy local sessions that were created
+// before we generated session ids on START. Uses SHA-256 of the natural key
+// formatted as a UUID v5-ish string. Idempotent per-record so backfill is
+// safe to run multiple times.
+async function stableSessionId(localSession) {
+  const key = `${localSession.repo}|${localSession.issueNumber}|${localSession.completedAt}|${localSession.durationMs}`;
+  const enc = new TextEncoder().encode(key);
+  const buf = await crypto.subtle.digest('SHA-256', enc);
+  const hex = [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, '0')).join('');
+  // Format as UUID-shaped string (not a real v5 — just convenient)
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-5${hex.slice(13, 16)}-8${hex.slice(17, 20)}-${hex.slice(20, 32)}`;
+}
+
+// Pull the authoritative total from the backend for (repo, issue) and
+// overwrite the linked GitHub Project field with it. Replaces the old
+// additive STOP-time sync so edits and deletes also propagate.
+//
+// Safe to call even when nothing should happen — short-circuits when:
+//   - issue_number is the manual-entry sentinel (0)
+//   - the repo isn't an owner/name slug (freeform meeting/PM label)
+//   - PAT or backend isn't configured
+//
+// Returns the shape the old syncToGitHub used to produce, so the STOP
+// handler can keep showing the same in-page status pill.
+async function recomputeProjectField(repo, issueNumber) {
+  if (!issueNumber || issueNumber <= 0) {
+    return { skipped: true, reason: 'No linked issue' };
+  }
+  if (!repo || !/^[^/\s]+\/[^/\s]+$/.test(repo)) {
+    return { skipped: true, reason: 'Not a GitHub repo' };
+  }
+  const { settings = {} } = await chrome.storage.local.get('settings');
+  if (!settings.pat) return { skipped: true, reason: 'No PAT configured' };
+
+  let totalHours;
+  let fallbackUsed = false;
+  try {
+    const resp = await getSessionTotals(repo, issueNumber);
+    totalHours = resp.total_hours || 0;
+  } catch (err) {
+    // Server may be on an older deploy that doesn't have /v1/sessions/totals
+    // (FastAPI routes "/totals" to the /{session_id} PUT/DELETE pattern and
+    // returns 405). Fall back to summing the local cache so the project
+    // field still reflects at least the current user's just-saved time.
+    // After the server is redeployed, the next mutation pulls the
+    // authoritative total and the field converges.
+    const localSessions = await cache.listSessions({ limit: 5000 });
+    // Sum durationMs (exact) rather than durationHours (quarter-hour
+    // rounded) — otherwise short sessions vanish from the total and
+    // we'd write 0 to the field, wiping the existing value.
+    const localTotalMs = localSessions
+      .filter((s) => s.repo === repo && s.issueNumber === issueNumber)
+      .reduce((sum, s) => sum + (s.durationMs || 0), 0);
+    const localTotal = localTotalMs / 3_600_000;
+    if (localTotal <= 0) {
+      // No local rows — writing 0 would wipe whatever the field already
+      // holds for other users. Safer to leave it alone and surface the
+      // upstream error so the user knows to redeploy the backend.
+      return { error: `Totals fetch failed: ${err.message}` };
+    }
+    totalHours = localTotal;
+    fallbackUsed = true;
+    console.warn(
+      '[Takt] /v1/sessions/totals unavailable, falling back to local cache sum (',
+      totalHours, 'h). Redeploy the backend to get cross-user totals.',
+      err
+    );
+  }
+  const result = await syncIssueTimeToProjects(
+    settings.pat, repo, issueNumber, totalHours, settings
+  );
+  if (fallbackUsed) result.fallback = 'local_cache';
+  return result;
+}
+
+async function pushCompletedToBackend(completed, syncResult) {
+  const payload = toBackendSession(completed, syncResult);
+  try {
+    await pushSession(payload);
+    // Backend confirmed — update the cache entry's sync metadata.
+    await cache.upsertSession({
+      sessionId: payload.session_id,
+      syncedToProject: payload.synced_to_project,
+      projectTitles: payload.project_titles,
+      syncStatus: 'synced',
+      syncedAt: Date.now(),
+    });
+    return { ok: true, session_id: payload.session_id };
+  } catch (err) {
+    // Enqueue for retry. Permanent errors will still be dropped by the
+    // queue's permanent-error filter on the next flush. Cache stays at
+    // 'pending'.
+    await enqueueSession(payload);
+    return { ok: false, queued: true, error: err.message, code: err.code };
+  }
 }
 
 // --- Alarm keep-alive ---
@@ -42,14 +200,64 @@ function clearAlarm() {
 
 chrome.alarms.onAlarm.addListener(async (alarm) => {
   if (alarm.name !== ALARM_NAME) return;
+
+  // Always try to drain the sync queue — handles offline-then-online recovery.
+  try {
+    const result = await flushQueue();
+    // After a successful drain the server has new rows that affect the
+    // (repo, issue) totals — re-sync the linked Project fields. Deduped
+    // per (repo, issue) so we don't recompute twice for back-to-back
+    // edits on the same issue.
+    if (result?.drained?.length) {
+      const seen = new Set();
+      for (const { repo, issueNumber } of result.drained) {
+        const key = `${repo}#${issueNumber}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        recomputeProjectField(repo, issueNumber).catch((err) =>
+          console.warn('[Takt] project recompute (drain) failed:', err)
+        );
+      }
+    }
+  } catch (err) {
+    console.warn('[Takt] flushQueue error:', err);
+  }
+
   const { activeSession } = await getState();
   if (!activeSession) {
-    clearAlarm();
+    // Only clear the alarm if there's nothing in the queue either; otherwise
+    // we want to keep ticking until the queue drains.
+    if ((await queueLength()) === 0) clearAlarm();
     return;
   }
   // Broadcast tick so any open content scripts / popup can sync
   broadcastTick(activeSession);
 });
+
+async function onWake() {
+  // Drain the queue if anything's pending.
+  if ((await queueLength()) > 0) {
+    startAlarm();
+    flushQueue().catch(() => {});
+  }
+  // One-shot migration: if the new sessionCache is empty but we have
+  // legacy completedSessions, fold them in so the user doesn't see an
+  // empty My Time after upgrading.
+  try {
+    const counts = await cache.counts();
+    if (counts.total === 0) {
+      const result = await cache.migrateFromCompletedSessions();
+      if (result.migrated > 0) {
+        console.log('[Takt] migrated', result.migrated, 'legacy sessions into cache');
+      }
+    }
+  } catch (err) {
+    console.warn('[Takt] cache migration failed:', err);
+  }
+}
+
+chrome.runtime.onStartup.addListener(onWake);
+chrome.runtime.onInstalled.addListener(onWake);
 
 function broadcastTick(session) {
   const elapsedMs = computeElapsed(session);
@@ -70,19 +278,29 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 });
 
 async function handleMessage({ action, payload }) {
-  const { activeSession, completedSessions } = await getState();
+  const { activeSession } = await getState();
 
   switch (action) {
     case 'START': {
       if (activeSession) {
-        return {
-          error: `Timer already active on ${activeSession.repo}#${activeSession.issueNumber}`,
-        };
+        const ref = activeSession.issueNumber > 0
+          ? `${activeSession.repo}#${activeSession.issueNumber}`
+          : activeSession.repo;
+        return { error: `Timer already active on ${ref}` };
       }
+      // issueNumber=0 is the manual-entry sentinel (meetings, PM work
+      // started from the Add-entry modal "Start tracking" button). The
+      // STOP path skips the issue-comment + project sync for these.
+      const issueNum = Number.isFinite(payload.issueNumber) && payload.issueNumber > 0
+        ? payload.issueNumber : 0;
       const session = {
+        // session_id is generated at START so it's stable across pause/resume
+        // and matches the BigQuery `session_id` we'll push on STOP.
+        sessionId: crypto.randomUUID(),
         repo: payload.repo,
-        issueNumber: payload.issueNumber,
+        issueNumber: issueNum,
         issueTitle: payload.issueTitle,
+        sourceUrl: payload.sourceUrl || null,
         startedAt: Date.now(),
         accumulatedMs: 0,
         status: 'running',
@@ -138,78 +356,142 @@ async function handleMessage({ action, payload }) {
 
     case 'STOP': {
       if (!activeSession) {
+        console.log('[Takt] STOP: no active session');
         return { error: 'No active session to stop' };
       }
+      console.log('[Takt] STOP:', activeSession.repo, '#' + activeSession.issueNumber);
       const durationMs = computeElapsed(activeSession);
+      const completedAt = Date.now();
+      const startedAtMs = activeSession.startedAt
+        // For paused sessions startedAt is null; estimate started time
+        // from completedAt - durationMs.
+        ?? (completedAt - durationMs);
       const completed = {
+        // Backend-aligned identifiers
+        sessionId: activeSession.sessionId || crypto.randomUUID(),
         repo: activeSession.repo,
         issueNumber: activeSession.issueNumber,
         issueTitle: activeSession.issueTitle,
+        sourceUrl: activeSession.sourceUrl || null,
+        startedAtMs,
         durationMs,
-        completedAt: Date.now(),
+        completedAt,
       };
       await saveSession(null);
-      await pushCompleted(completed, completedSessions);
       clearAlarm();
 
-      // Attempt GitHub sync
-      let syncResult = null;
+      // Write into the local cache immediately as 'pending'. Marked
+      // 'synced' below once the backend confirms (or stays pending and
+      // gets retried by the queue).
+      const durationHoursForCache =
+        Math.round((completed.durationMs / 3600000) * 4) / 4;
+      const isGhStop = /^[^/\s]+\/[^/\s]+$/.test(completed.repo || '');
+      await cache.upsertSession({
+        sessionId: completed.sessionId,
+        repo: completed.repo,
+        issueNumber: completed.issueNumber,
+        issueTitle: completed.issueTitle ?? null,
+        issueUrl: (isGhStop && completed.issueNumber > 0)
+          ? `https://github.com/${completed.repo}/issues/${completed.issueNumber}`
+          : null,
+        sourceUrl: completed.sourceUrl,
+        startedAt: completed.startedAtMs,
+        completedAt: completed.completedAt,
+        durationMs: completed.durationMs,
+        durationHours: durationHoursForCache,
+        syncedToProject: false, // updated below if syncResult succeeded
+        projectTitles: [],
+        taktVersion: TAKT_VERSION,
+        syncStatus: 'pending',
+        syncedAt: null,
+      });
+
+      // Push to the Takt backend (BigQuery) FIRST. The new GitHub Project
+      // sync uses `GET /v1/sessions/totals` to compute the value to write,
+      // so the row needs to exist server-side before we recompute. If the
+      // push fails it goes to the retry queue (flushQueue does the same
+      // recompute step on drain).
+      let backendResult = null;
       try {
-        syncResult = await syncToGitHub(completed);
+        backendResult = await pushCompletedToBackend(completed, null);
       } catch (err) {
-        syncResult = { error: err.message };
+        backendResult = { error: err.message };
       }
 
-      // Post comment on the issue
+      // Recompute + overwrite the GitHub Project field. Skips itself when
+      // there's no issue link, no PAT, or no project — same surface as
+      // the old additive sync.
+      let syncResult = null;
+      if (backendResult?.ok) {
+        try {
+          syncResult = await recomputeProjectField(
+            completed.repo, completed.issueNumber
+          );
+        } catch (err) {
+          syncResult = { error: err.message };
+        }
+      } else {
+        syncResult = { skipped: true, reason: 'Backend push deferred — will sync on retry' };
+      }
+
+      // Mirror the syncResult onto the cached row so the table reflects
+      // the project-titles immediately without waiting for the next
+      // reconcile from the backend.
+      if (syncResult?.results?.length) {
+        const projectTitles = syncResult.results
+          .filter((r) => r.synced)
+          .map((r) => r.project);
+        if (projectTitles.length) {
+          await cache.upsertSession({
+            sessionId: completed.sessionId,
+            syncedToProject: true,
+            projectTitles,
+          });
+        }
+      }
+
+      // Post comment on the issue. Skip for manual entries (issueNumber=0)
+      // and non-GitHub repo labels.
       let commentResult = null;
       try {
-        const { settings } = await chrome.storage.local.get('settings');
-        if (settings?.pat) {
-          // Resolve username — fetch if not cached
-          let username = settings.username;
-          if (!username) {
-            const resp = await fetch('https://api.github.com/user', {
-              headers: { Authorization: `Bearer ${settings.pat}`, Accept: 'application/vnd.github+json' },
-            });
-            if (resp.ok) {
-              const user = await resp.json();
-              username = user.login;
-              await chrome.storage.local.set({ settings: { ...settings, username } });
+        const ghRepo = /^[^/\s]+\/[^/\s]+$/.test(completed.repo);
+        if (ghRepo && completed.issueNumber > 0) {
+          const { settings } = await chrome.storage.local.get('settings');
+          if (settings?.pat) {
+            let username = settings.username;
+            if (!username) {
+              const resp = await fetch('https://api.github.com/user', {
+                headers: { Authorization: `Bearer ${settings.pat}`, Accept: 'application/vnd.github+json' },
+              });
+              if (resp.ok) {
+                const user = await resp.json();
+                username = user.login;
+                await chrome.storage.local.set({ settings: { ...settings, username } });
+              }
             }
-          }
-          if (username) {
-            const [owner, repo] = completed.repo.split('/');
-            const durationHours = Math.round((completed.durationMs / 3600000) * 4) / 4;
-            await postTimeComment(
-              settings.pat, owner, repo, completed.issueNumber,
-              durationHours, username
-            );
-            commentResult = { ok: true };
+            if (username) {
+              const [owner, repo] = completed.repo.split('/');
+              const durationHours = Math.round((completed.durationMs / 3600000) * 4) / 4;
+              await postTimeComment(
+                settings.pat, owner, repo, completed.issueNumber,
+                durationHours, username
+              );
+              commentResult = { ok: true };
+            }
           }
         }
       } catch (err) {
         commentResult = { error: err.message };
       }
 
-      return { ok: true, completed, syncResult, commentResult };
+      return { ok: true, completed, syncResult, commentResult, backendResult };
     }
 
     case 'GET_STATE': {
       return {
         activeSession,
         elapsedMs: computeElapsed(activeSession),
-        completedSessions,
       };
-    }
-
-    case 'DELETE_SESSION': {
-      const index = payload.index;
-      if (typeof index !== 'number' || index < 0 || index >= completedSessions.length) {
-        return { error: 'Invalid session index' };
-      }
-      completedSessions.splice(index, 1);
-      await chrome.storage.local.set({ completedSessions });
-      return { ok: true, completedSessions };
     }
 
     case 'FETCH_ALL_PROJECTS': {
@@ -220,6 +502,336 @@ async function handleMessage({ action, payload }) {
     case 'FETCH_PROJECT_FIELDS': {
       const fields = await fetchProjectNumberFields(payload.pat, payload.projectId);
       return { ok: true, fields };
+    }
+
+    case 'FETCH_USER_REPOS': {
+      // Pulls org repos from GitHub and caches them under
+      // settings.knownReposByOrg[org] so the My Time "Add entry" picker can
+      // render instantly without a round-trip per open. Defaults to the
+      // primary Takt org for backward compat. Personal repos are
+      // deliberately excluded — Takt is scoped to orgs.
+      const { settings = {} } = await chrome.storage.local.get('settings');
+      if (!settings.pat) {
+        return { ok: false, error: { code: 'no_pat', message: 'No PAT configured' } };
+      }
+      const org = payload?.org || TAKT_ORG;
+      try {
+        const repos = await fetchOrgRepos(settings.pat, org);
+        const knownReposByOrg = { ...(settings.knownReposByOrg || {}), [org]: repos };
+        const next = { ...settings, knownReposByOrg };
+        // Mirror the primary-org list into the legacy `knownRepos` field so
+        // older surfaces that still read it keep working.
+        if (org === TAKT_ORG) next.knownRepos = repos;
+        await chrome.storage.local.set({ settings: next });
+        return { ok: true, org, repos };
+      } catch (err) {
+        return { ok: false, error: { code: 'fetch_failed', message: err.message } };
+      }
+    }
+
+    case 'FETCH_USER_ORGS': {
+      // Lists GitHub orgs the PAT user belongs to so the Add-entry modal can
+      // populate its Organization dropdown. Cached on settings.knownOrgs so
+      // the modal opens without waiting on the network.
+      const { settings = {} } = await chrome.storage.local.get('settings');
+      if (!settings.pat) {
+        return { ok: false, error: { code: 'no_pat', message: 'No PAT configured' } };
+      }
+      try {
+        const orgs = await fetchUserOrgs(settings.pat);
+        await chrome.storage.local.set({
+          settings: { ...settings, knownOrgs: orgs },
+        });
+        return { ok: true, orgs };
+      } catch (err) {
+        return { ok: false, error: { code: 'fetch_failed', message: err.message } };
+      }
+    }
+
+    case 'FETCH_REPO_PROJECTS': {
+      // For the Add-entry cascading dropdown: list Projects v2 linked to
+      // the chosen repo. Returns [{ id, title, number }].
+      const { settings = {} } = await chrome.storage.local.get('settings');
+      if (!settings.pat) {
+        return { ok: false, error: { code: 'no_pat', message: 'No PAT configured' } };
+      }
+      const repo = payload?.repo;
+      if (!repo || !/^[^/\s]+\/[^/\s]+$/.test(repo)) {
+        return { ok: false, error: { code: 'invalid_repo', message: 'Repo must be owner/name.' } };
+      }
+      const [owner, name] = repo.split('/');
+      try {
+        const projects = await fetchRepoProjects(settings.pat, owner, name);
+        return { ok: true, projects };
+      } catch (err) {
+        return { ok: false, error: { code: 'fetch_failed', message: err.message } };
+      }
+    }
+
+    case 'FETCH_PROJECT_ISSUES': {
+      // For the Add-entry cascading dropdown: list issues in a project,
+      // optionally filtered to a specific repo. Returns
+      // [{ number, title, repo, state }].
+      const { settings = {} } = await chrome.storage.local.get('settings');
+      if (!settings.pat) {
+        return { ok: false, error: { code: 'no_pat', message: 'No PAT configured' } };
+      }
+      const projectId = payload?.projectId;
+      const repoFilter = payload?.repo || null;
+      if (!projectId) {
+        return { ok: false, error: { code: 'invalid_input', message: 'projectId required.' } };
+      }
+      try {
+        const issues = await fetchProjectIssues(settings.pat, projectId, repoFilter);
+        return { ok: true, issues };
+      } catch (err) {
+        return { ok: false, error: { code: 'fetch_failed', message: err.message } };
+      }
+    }
+
+    case 'BACKEND_PING': {
+      // Used by options/popup to show a green/red status pip.
+      const result = await pingBackend();
+      return result;
+    }
+
+    case 'FLUSH_QUEUE': {
+      const result = await flushQueue();
+      if (result?.drained?.length) {
+        const seen = new Set();
+        for (const { repo, issueNumber } of result.drained) {
+          const key = `${repo}#${issueNumber}`;
+          if (seen.has(key)) continue;
+          seen.add(key);
+          recomputeProjectField(repo, issueNumber).catch((err) =>
+            console.warn('[Takt] project recompute (manual flush) failed:', err)
+          );
+        }
+      }
+      return { ok: true, ...result };
+    }
+
+    case 'QUEUE_LENGTH': {
+      return { ok: true, length: await queueLength() };
+    }
+
+    case 'LIST_LOCAL_SESSIONS': {
+      // Synchronous-style read from the cache. Used by My Time / popup
+      // for the instant-render path before the backend revalidate fires.
+      const sessions = await cache.listSessions(payload || {});
+      const counts = await cache.counts();
+      const lastSyncAt = await cache.getLastSyncAt();
+      return { ok: true, sessions, counts, lastSyncAt };
+    }
+
+    case 'LIST_BACKEND_SESSIONS': {
+      // Pulls from the backend AND (by default) reconciles the cache for
+      // the queried window. Caller (My Time) typically calls
+      // LIST_LOCAL_SESSIONS first for instant render and this in the
+      // background to refresh.
+      //
+      // `skipReconcile: true` is used when the caller is querying a window
+      // older than the cache's 30-day retention — reconciling would write
+      // those rows in then immediately prune them on save.
+      try {
+        const { skipReconcile, ...apiParams } = payload || {};
+        const sessions = await listBackendSessions(apiParams);
+        const records = sessions.map(cache.fromBackendSession);
+        if (!skipReconcile) {
+          await cache.reconcileWindow({
+            from: apiParams.from,
+            to: apiParams.to,
+            records,
+          });
+        }
+        return { ok: true, sessions, records };
+      } catch (err) {
+        return { ok: false, error: { code: err.code, message: err.message, status: err.status } };
+      }
+    }
+
+    case 'UPDATE_BACKEND_SESSION': {
+      // Optimistic local update first, then push. On failure, restore the
+      // cached pre-edit version so the UI doesn't show a stale value.
+      const before = await cache.getSession(payload.sessionId);
+      if (before && payload.patch?.duration_ms !== undefined) {
+        const newMs = payload.patch.duration_ms;
+        await cache.upsertSession({
+          ...before,
+          durationMs: newMs,
+          durationHours: Math.round((newMs / 3_600_000) * 4) / 4,
+          startedAt: before.completedAt - newMs,
+          syncStatus: 'dirty',
+        });
+      }
+      try {
+        const updated = await updateBackendSession(payload.sessionId, payload.patch);
+        await cache.upsertSession(cache.fromBackendSession(updated));
+        // Push the new total back to any linked GitHub Project. Fire-and-
+        // forget — the UI doesn't block on this, errors get logged.
+        recomputeProjectField(updated.repo, updated.issue_number)
+          .catch((err) => console.warn('[Takt] project recompute (update) failed:', err));
+        return { ok: true, session: updated };
+      } catch (err) {
+        if (before) await cache.upsertSession(before); // restore
+        return { ok: false, error: { code: err.code, message: err.message, status: err.status } };
+      }
+    }
+
+    case 'DELETE_BACKEND_SESSION': {
+      // Optimistic local removal, restore on failure.
+      const before = await cache.removeSession(payload.sessionId);
+      try {
+        await deleteBackendSession(payload.sessionId);
+        if (before) {
+          recomputeProjectField(before.repo, before.issueNumber)
+            .catch((err) => console.warn('[Takt] project recompute (delete) failed:', err));
+        }
+        return { ok: true };
+      } catch (err) {
+        if (before) await cache.upsertSession(before);
+        return { ok: false, error: { code: err.code, message: err.message, status: err.status } };
+      }
+    }
+
+    case 'ADMIN_LIST_MEMBERS': {
+      try {
+        const members = await listBackendMembers();
+        return { ok: true, members };
+      } catch (err) {
+        return { ok: false, error: { code: err.code, message: err.message, status: err.status } };
+      }
+    }
+
+    case 'ADMIN_UPSERT_MEMBER': {
+      try {
+        const member = await upsertBackendMember(payload);
+        return { ok: true, member };
+      } catch (err) {
+        return { ok: false, error: { code: err.code, message: err.message, status: err.status } };
+      }
+    }
+
+    case 'ADMIN_GET_ORG_CONFIG': {
+      try {
+        const config = await getBackendOrgConfig();
+        return { ok: true, config };
+      } catch (err) {
+        return { ok: false, error: { code: err.code, message: err.message, status: err.status } };
+      }
+    }
+
+    case 'ADMIN_PUT_ORG_CONFIG': {
+      try {
+        const config = await putBackendOrgConfig(payload);
+        return { ok: true, config };
+      } catch (err) {
+        return { ok: false, error: { code: err.code, message: err.message, status: err.status } };
+      }
+    }
+
+    case 'CACHE_COUNTS': {
+      return { ok: true, ...(await cache.counts()), lastSyncAt: await cache.getLastSyncAt() };
+    }
+
+    case 'ADD_MANUAL_SESSION': {
+      // Manual entry from My Time. Mirrors the STOP write path: optimistic
+      // cache insert, then push to backend; on failure the queue retries.
+      // Unlike STOP, we don't post a GitHub comment (the user is
+      // reconstructing past work, not closing a fresh timer). We DO
+      // recompute the GitHub Project field — once the row is in BigQuery
+      // it counts toward the issue's tracked total just like a STOP row.
+      const { repo, issueNumber, issueTitle, completedAt, durationMs } =
+        payload || {};
+      if (!repo || !completedAt || !durationMs || durationMs <= 0) {
+        return {
+          ok: false,
+          error: { code: 'invalid_input', message: 'Missing or invalid fields.' },
+        };
+      }
+      // issueNumber=0 is the "no linked issue" sentinel (meetings, PM
+      // work, email). Anything else must be a positive int.
+      const issueNum = Number.isFinite(issueNumber) && issueNumber > 0
+        ? issueNumber : 0;
+
+      const sessionId = crypto.randomUUID();
+      const startedAtMs = completedAt - durationMs;
+      const durationHoursForCache =
+        Math.round((durationMs / 3_600_000) * 4) / 4;
+      const isGhRepo = /^[^/\s]+\/[^/\s]+$/.test(repo);
+
+      await cache.upsertSession({
+        sessionId,
+        repo,
+        issueNumber: issueNum,
+        issueTitle: issueTitle ?? null,
+        issueUrl: isGhRepo && issueNum > 0
+          ? `https://github.com/${repo}/issues/${issueNum}` : null,
+        sourceUrl: null,
+        startedAt: startedAtMs,
+        completedAt,
+        durationMs,
+        durationHours: durationHoursForCache,
+        syncedToProject: false,
+        projectTitles: [],
+        taktVersion: TAKT_VERSION,
+        syncStatus: 'pending',
+        syncedAt: null,
+      });
+
+      const completed = {
+        sessionId,
+        repo,
+        issueNumber: issueNum,
+        issueTitle: issueTitle ?? null,
+        sourceUrl: null,
+        startedAtMs,
+        durationMs,
+        completedAt,
+      };
+
+      // Push to backend. On failure the cache entry stays 'pending' and
+      // the sync queue will retry — so from the user's POV the entry is
+      // saved either way, and the row's sync badge communicates state.
+      const backendResult = await pushCompletedToBackend(completed, null);
+
+      // Recompute + write the GitHub Project field (only meaningful when
+      // there's a linked issue and a project). No-op otherwise.
+      if (backendResult?.ok) {
+        recomputeProjectField(repo, issueNum)
+          .catch((err) => console.warn('[Takt] project recompute (add) failed:', err));
+      }
+      return { ok: true, sessionId, backendResult };
+    }
+
+    case 'BACKFILL_LOCAL': {
+      // Push every item in legacy completedSessions[] that isn't already on
+      // the backend. We have no way to know "already on the backend" without
+      // a round-trip per item; cheap heuristic: synthesise a session_id from
+      // (repo, issue_number, completedAt) so re-runs are idempotent.
+      const legacy = await getLegacyCompleted();
+      const queued = [];
+      for (const s of legacy) {
+        const stableId = await stableSessionId(s);
+        const payload = toBackendSession(
+          {
+            sessionId: stableId,
+            repo: s.repo,
+            issueNumber: s.issueNumber,
+            issueTitle: s.issueTitle,
+            sourceUrl: null,
+            startedAtMs: s.completedAt - s.durationMs,
+            durationMs: s.durationMs,
+            completedAt: s.completedAt,
+          },
+          null
+        );
+        await enqueueSession(payload);
+        queued.push(stableId);
+      }
+      startAlarm();
+      const flushed = await flushQueue();
+      return { ok: true, queued: queued.length, flushed };
     }
 
     default:

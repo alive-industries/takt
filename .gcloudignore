@@ -1,0 +1,16 @@
+# Files to skip when uploading to Cloud Build.
+# Mirrors .gitignore + a few extras that don't belong in the build context.
+.git
+.gitignore
+.devin
+.claude
+.cursor
+.DS_Store
+node_modules
+**/.venv
+**/__pycache__
+**/*.pyc
+**/.pytest_cache
+**/.ruff_cache
+extension
+.gcloudignore

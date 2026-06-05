@@ -63,10 +63,15 @@
       ? 'active-timer--running'
       : 'active-timer--paused';
 
+    // issueNumber=0 = manual entry / "no linked issue" (meetings, PM,
+    // email). Show just the title without a phantom #0 prefix.
+    const issueLabel = currentSession.issueNumber > 0
+      ? `#${currentSession.issueNumber} ${escapeHtml(currentSession.issueTitle || '')}`
+      : escapeHtml(currentSession.issueTitle || 'Untitled');
     activeSection.innerHTML = `
       <div class="active">
-        <div class="active-repo">${currentSession.repo}</div>
-        <div class="active-issue">#${currentSession.issueNumber} ${escapeHtml(currentSession.issueTitle)}</div>
+        <div class="active-repo">${escapeHtml(currentSession.repo)}</div>
+        <div class="active-issue">${issueLabel}</div>
         <div class="active-timer ${timerClass}" id="timer-display">${formatElapsed(elapsed)}</div>
         <div class="active-controls">
           <button class="btn btn--primary" id="btn-toggle">
@@ -95,6 +100,7 @@
           renderActive();
           stopDisplayTimer();
           loadSessions();
+          refreshSyncStatus();
         }
       });
     });
@@ -109,14 +115,19 @@
 
     sessionsList.innerHTML = sessions
       .slice(0, 5)
-      .map(
-        (s) => `
+      .map((s) => {
+        // issueNumber=0 entries (manual / no issue) show the title instead
+        // of a #0 reference — keeps the recent list readable for meetings,
+        // PM, email time.
+        const ref = s.issueNumber > 0
+          ? `${escapeHtml(s.repo)}#${s.issueNumber}`
+          : escapeHtml(s.issueTitle || s.repo);
+        return `
         <li>
-          <span class="session-ref">${s.repo}#${s.issueNumber}</span>
+          <span class="session-ref">${ref}</span>
           <span class="session-duration">${formatDuration(s.durationMs)} &middot; ${formatRelative(s.completedAt)}</span>
-        </li>
-      `
-      )
+        </li>`;
+      })
       .join('');
   }
 
@@ -156,9 +167,31 @@
   // --- Load data ---
 
   function loadSessions() {
-    chrome.storage.local.get('completedSessions', ({ completedSessions }) => {
-      renderSessions(completedSessions || []);
+    sendMessage('LIST_LOCAL_SESSIONS', { limit: 5 }).then((resp) => {
+      const records = resp?.sessions || [];
+      // Cache records use { issueNumber, durationMs, completedAt } too, so
+      // renderSessions works directly.
+      renderSessions(records);
     });
+  }
+
+  async function refreshSyncStatus() {
+    const el = document.getElementById('sync-status');
+    if (!el) return;
+    const [ping, queue] = await Promise.all([
+      sendMessage('BACKEND_PING'),
+      sendMessage('QUEUE_LENGTH'),
+    ]);
+    const dot = (color) =>
+      `<span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:${color};margin-right:4px;vertical-align:middle;"></span>`;
+    if (ping?.ok) {
+      const pending = queue?.length || 0;
+      el.innerHTML = pending > 0
+        ? dot('#bf8700') + `${pending} pending`
+        : dot('#1a7f37') + 'synced';
+    } else {
+      el.innerHTML = dot('#d1242f') + 'offline';
+    }
   }
 
   function init() {
@@ -166,8 +199,9 @@
       currentSession = state?.activeSession || null;
       renderActive();
       toggleDisplayTimer();
-      renderSessions(state?.completedSessions || []);
     });
+    loadSessions();
+    refreshSyncStatus();
   }
 
   // --- Options link ---

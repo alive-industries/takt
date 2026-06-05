@@ -170,16 +170,43 @@
     <div class="field">
       <label for="pat">Personal Access Token (classic)</label>
       <div class="hint">
-        <a href="https://github.com/settings/tokens/new?scopes=repo,project&description=Takt%20time%20tracker" target="_blank">Create a classic PAT</a>
-        with <code>repo</code> and <code>project</code> scopes.<br>
+        <a href="https://github.com/settings/tokens/new?scopes=repo,project,read:org&description=Takt%20time%20tracker" target="_blank">Create a classic PAT</a>
+        with <code>repo</code>, <code>project</code>, and <code>read:org</code> scopes.<br>
         <span style="color: #9a6700;">Note:</span> GitHub Projects v2 requires a classic PAT — fine-grained tokens
-        don't yet support project field mutations.
+        don't yet support project field mutations. <code>read:org</code> is needed for backend org-membership checks.
       </div>
       <input type="password" id="pat" placeholder="ghp_xxxxxxxxxxxxxxxxxxxx" autocomplete="off">
     </div>
 
+    <div class="field">
+      <label for="backend-url">Takt backend URL</label>
+      <div class="hint">
+        Where time records are pushed. Defaults to localhost for development.
+        <span id="backend-status-pip" style="margin-left: 8px;"></span>
+      </div>
+      <input type="text" id="backend-url" placeholder="http://localhost:8000" autocomplete="off">
+    </div>
+
+    <div class="field">
+      <label for="api-key">Takt API key</label>
+      <div class="hint">
+        Shared key required by deployed backends. Leave blank for local dev.
+      </div>
+      <input type="password" id="api-key" placeholder="optional for localhost" autocomplete="off">
+    </div>
+
+    <div class="actions" style="margin-top: -8px; margin-bottom: 16px;">
+      <button class="btn-save" id="btn-save-backend" style="background:#0969da;">Save backend settings</button>
+      <span id="backend-save-status"></span>
+    </div>
+
+    <div class="field" id="admin-link-field" style="display:none;">
+      <a href="#" id="admin-link" style="color:#0969da;font-weight:600;">Open Admin (members &amp; org config) &rarr;</a>
+    </div>
+
     <div class="actions">
       <button class="btn-save" id="btn-validate">Connect & Fetch Projects</button>
+      <button class="btn-save" id="btn-backfill" style="background: #0969da;">Backfill local sessions to backend</button>
       <span id="status"></span>
     </div>
 
