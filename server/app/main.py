@@ -11,7 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app.config import get_settings
-from app.routes import admin, me, sessions
+from app.routes import admin, analytics, me, sessions
 from app.services.github import get_github_client, reset_github_client
 
 
@@ -93,6 +93,7 @@ def create_app() -> FastAPI:
     app.include_router(me.router)
     app.include_router(sessions.router)
     app.include_router(admin.router)
+    app.include_router(analytics.router)
 
     @app.get("/health", include_in_schema=False)
     def health() -> dict:

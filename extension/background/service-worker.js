@@ -4,8 +4,8 @@ import {
   fetchAllProjects,
   fetchProjectNumberFields,
   fetchOrgRepos,
-  fetchRepoProjects,
-  fetchProjectIssues,
+  fetchRepoIssues,
+  fetchIssueProjectTitle,
   fetchUserOrgs,
   TAKT_ORG,
 } from './github-api.js';
@@ -54,6 +54,15 @@ function computeElapsed(session) {
   return session.accumulatedMs + running;
 }
 
+// Derive the `project` label for a session. Rule (set by the PM): the title of
+// the GitHub Project the issue belongs to (the most recently updated one when an
+// issue sits on several boards); otherwise the repo (`owner/name`). Always
+// returns something when a repo is present, so `project` is never blank.
+async function deriveProject(pat, repo, issueNumber) {
+  const title = await fetchIssueProjectTitle(pat, repo, issueNumber);
+  return title || repo || null;
+}
+
 // --- Backend payload shaping ---
 
 function toBackendSession(completed, syncResult) {
@@ -75,6 +84,7 @@ function toBackendSession(completed, syncResult) {
 
   return {
     session_id: completed.sessionId,
+    project: completed.project ?? null,
     repo,
     issue_number: issueNumber,
     issue_title: completed.issueTitle || null,
@@ -297,6 +307,7 @@ async function handleMessage({ action, payload }) {
         // session_id is generated at START so it's stable across pause/resume
         // and matches the BigQuery `session_id` we'll push on STOP.
         sessionId: crypto.randomUUID(),
+        project: payload.project || null,
         repo: payload.repo,
         issueNumber: issueNum,
         issueTitle: payload.issueTitle,
@@ -366,9 +377,15 @@ async function handleMessage({ action, payload }) {
         // For paused sessions startedAt is null; estimate started time
         // from completedAt - durationMs.
         ?? (completedAt - durationMs);
+      // Derive the project label: the issue's GitHub Project title, else repo.
+      const { settings: stopSettings = {} } = await chrome.storage.local.get('settings');
+      const stopProject = await deriveProject(
+        stopSettings.pat, activeSession.repo, activeSession.issueNumber
+      );
       const completed = {
         // Backend-aligned identifiers
         sessionId: activeSession.sessionId || crypto.randomUUID(),
+        project: stopProject,
         repo: activeSession.repo,
         issueNumber: activeSession.issueNumber,
         issueTitle: activeSession.issueTitle,
@@ -388,6 +405,7 @@ async function handleMessage({ action, payload }) {
       const isGhStop = /^[^/\s]+\/[^/\s]+$/.test(completed.repo || '');
       await cache.upsertSession({
         sessionId: completed.sessionId,
+        project: completed.project ?? null,
         repo: completed.repo,
         issueNumber: completed.issueNumber,
         issueTitle: completed.issueTitle ?? null,
@@ -548,9 +566,9 @@ async function handleMessage({ action, payload }) {
       }
     }
 
-    case 'FETCH_REPO_PROJECTS': {
-      // For the Add-entry cascading dropdown: list Projects v2 linked to
-      // the chosen repo. Returns [{ id, title, number }].
+    case 'FETCH_REPO_ISSUES': {
+      // For the Add-entry cascade (Project -> Repo -> Issue): list issues in
+      // the chosen repo. Returns [{ number, title, state }].
       const { settings = {} } = await chrome.storage.local.get('settings');
       if (!settings.pat) {
         return { ok: false, error: { code: 'no_pat', message: 'No PAT configured' } };
@@ -559,30 +577,8 @@ async function handleMessage({ action, payload }) {
       if (!repo || !/^[^/\s]+\/[^/\s]+$/.test(repo)) {
         return { ok: false, error: { code: 'invalid_repo', message: 'Repo must be owner/name.' } };
       }
-      const [owner, name] = repo.split('/');
       try {
-        const projects = await fetchRepoProjects(settings.pat, owner, name);
-        return { ok: true, projects };
-      } catch (err) {
-        return { ok: false, error: { code: 'fetch_failed', message: err.message } };
-      }
-    }
-
-    case 'FETCH_PROJECT_ISSUES': {
-      // For the Add-entry cascading dropdown: list issues in a project,
-      // optionally filtered to a specific repo. Returns
-      // [{ number, title, repo, state }].
-      const { settings = {} } = await chrome.storage.local.get('settings');
-      if (!settings.pat) {
-        return { ok: false, error: { code: 'no_pat', message: 'No PAT configured' } };
-      }
-      const projectId = payload?.projectId;
-      const repoFilter = payload?.repo || null;
-      if (!projectId) {
-        return { ok: false, error: { code: 'invalid_input', message: 'projectId required.' } };
-      }
-      try {
-        const issues = await fetchProjectIssues(settings.pat, projectId, repoFilter);
+        const issues = await fetchRepoIssues(settings.pat, repo);
         return { ok: true, issues };
       } catch (err) {
         return { ok: false, error: { code: 'fetch_failed', message: err.message } };
@@ -741,6 +737,8 @@ async function handleMessage({ action, payload }) {
       // reconstructing past work, not closing a fresh timer). We DO
       // recompute the GitHub Project field — once the row is in BigQuery
       // it counts toward the issue's tracked total just like a STOP row.
+      // `repo` is required (it's the project fallback); `project` is derived,
+      // not supplied by the form.
       const { repo, issueNumber, issueTitle, completedAt, durationMs } =
         payload || {};
       if (!repo || !completedAt || !durationMs || durationMs <= 0) {
@@ -758,11 +756,16 @@ async function handleMessage({ action, payload }) {
       const startedAtMs = completedAt - durationMs;
       const durationHoursForCache =
         Math.round((durationMs / 3_600_000) * 4) / 4;
-      const isGhRepo = /^[^/\s]+\/[^/\s]+$/.test(repo);
+      const isGhRepo = /^[^/\s]+\/[^/\s]+$/.test(repo || '');
+
+      // Derive project: issue's GitHub Project title, else the repo.
+      const { settings: addSettings = {} } = await chrome.storage.local.get('settings');
+      const project = await deriveProject(addSettings.pat, repo, issueNum);
 
       await cache.upsertSession({
         sessionId,
-        repo,
+        project: project ?? null,
+        repo: repo || null,
         issueNumber: issueNum,
         issueTitle: issueTitle ?? null,
         issueUrl: isGhRepo && issueNum > 0
@@ -781,7 +784,8 @@ async function handleMessage({ action, payload }) {
 
       const completed = {
         sessionId,
-        repo,
+        project: project ?? null,
+        repo: repo || null,
         issueNumber: issueNum,
         issueTitle: issueTitle ?? null,
         sourceUrl: null,
@@ -796,7 +800,7 @@ async function handleMessage({ action, payload }) {
       const backendResult = await pushCompletedToBackend(completed, null);
 
       // Recompute + write the GitHub Project field (only meaningful when
-      // there's a linked issue and a project). No-op otherwise.
+      // there's a linked issue and a repo). No-op otherwise.
       if (backendResult?.ok) {
         recomputeProjectField(repo, issueNum)
           .catch((err) => console.warn('[Takt] project recompute (add) failed:', err));

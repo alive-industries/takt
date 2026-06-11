@@ -89,7 +89,9 @@ def insert_session(row: SessionIn, *, github_user: str, github_user_id: int) -> 
         bigquery.ScalarQueryParameter("session_id", "STRING", row.session_id),
         bigquery.ScalarQueryParameter("github_user", "STRING", github_user),
         bigquery.ScalarQueryParameter("github_user_id", "INT64", github_user_id),
-        bigquery.ScalarQueryParameter("project", "STRING", row.project),
+        # `project` is auto-derived client-side (GitHub Project title, else
+        # repo). Safety net: never store it blank when a repo is present.
+        bigquery.ScalarQueryParameter("project", "STRING", row.project or row.repo or None),
         # Coerce a missing repo to "" — older sessions tables created `repo`
         # NOT NULL and BigQuery can't drop that constraint via DDL.
         bigquery.ScalarQueryParameter("repo", "STRING", row.repo or ""),
@@ -382,15 +384,10 @@ def get_org_config() -> OrgConfig:
     pf = row.get("project_fields")
     if isinstance(pf, str):
         row["project_fields"] = json.loads(pf) if pf else {}
-    # project_repos stored as JSON: {projectLabel: [repo, ...]}
-    pr = row.get("project_repos")
-    if isinstance(pr, str):
-        row["project_repos"] = json.loads(pr) if pr else {}
-    elif pr is None:
-        row["project_repos"] = {}
-    # `projects` is a recently-added column; legacy rows return NULL.
-    if row.get("projects") is None:
-        row["projects"] = []
+    # `projects` / `project_repos` are vestigial columns from the removed manual
+    # project system — drop them so they don't reach the slimmed OrgConfig model.
+    row.pop("projects", None)
+    row.pop("project_repos", None)
     return OrgConfig(**row)
 
 
@@ -410,10 +407,6 @@ def update_org_config(update: OrgConfigUpdate, *, updated_by: str) -> OrgConfig:
         patch["project_fields"] = update.project_fields
     if update.excluded_projects is not None:
         patch["excluded_projects"] = update.excluded_projects
-    if update.projects is not None:
-        patch["projects"] = update.projects
-    if update.project_repos is not None:
-        patch["project_repos"] = update.project_repos
     merged = current.model_copy(update=patch)
 
     bq = _client()
@@ -425,16 +418,14 @@ def update_org_config(update: OrgConfigUpdate, *, updated_by: str) -> OrgConfig:
             default_field_name = @default_field_name,
             project_fields = @project_fields,
             excluded_projects = @excluded_projects,
-            projects = @projects,
-            project_repos = @project_repos,
             updated_by = @updated_by,
             updated_at = CURRENT_TIMESTAMP()
         WHEN NOT MATCHED THEN INSERT
             (org_login, default_field_name, project_fields, excluded_projects,
-             projects, project_repos, updated_by, updated_at)
+             updated_by, updated_at)
         VALUES
             (@org, @default_field_name, @project_fields, @excluded_projects,
-             @projects, @project_repos, @updated_by, CURRENT_TIMESTAMP())
+             @updated_by, CURRENT_TIMESTAMP())
     """
     params = [
         bigquery.ScalarQueryParameter("org", "STRING", s.github_org),
@@ -444,10 +435,6 @@ def update_org_config(update: OrgConfigUpdate, *, updated_by: str) -> OrgConfig:
         ),
         bigquery.ArrayQueryParameter(
             "excluded_projects", "STRING", merged.excluded_projects
-        ),
-        bigquery.ArrayQueryParameter("projects", "STRING", merged.projects),
-        bigquery.ScalarQueryParameter(
-            "project_repos", "STRING", json.dumps(merged.project_repos)
         ),
         bigquery.ScalarQueryParameter("updated_by", "STRING", updated_by),
     ]

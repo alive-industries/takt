@@ -178,6 +178,41 @@ export async function fetchProjectIssues(pat, projectId, repoFilter = null) {
   return items;
 }
 
+// List issues for a single repo, newest-updated first. Powers the "Add entry"
+// issue dropdown now that the cascade is Project (label) -> Repo -> Issue and
+// issues are no longer sourced from a GitHub Project. Returns
+// [{ number, title, state }], open issues first. `repo` is "owner/name".
+export async function fetchRepoIssues(pat, repo) {
+  const [owner, name] = (repo || '').split('/');
+  if (!owner || !name) return [];
+  const data = await graphql(
+    pat,
+    `query ($owner: String!, $name: String!) {
+      repository(owner: $owner, name: $name) {
+        issues(
+          first: 100,
+          states: [OPEN, CLOSED],
+          orderBy: { field: UPDATED_AT, direction: DESC }
+        ) {
+          nodes { number title state }
+        }
+      }
+    }`,
+    { owner, name }
+  );
+  const items = (data.repository?.issues?.nodes || []).map((n) => ({
+    number: n.number,
+    title: n.title,
+    state: n.state,
+  }));
+  // Open issues first, then by descending number — mirrors fetchProjectIssues.
+  items.sort((a, b) => {
+    if (a.state !== b.state) return a.state === 'OPEN' ? -1 : 1;
+    return b.number - a.number;
+  });
+  return items;
+}
+
 export async function fetchProjectNumberFields(pat, projectId) {
   const data = await graphql(
     pat,
@@ -212,7 +247,7 @@ async function getIssueProjectItems(pat, owner, repo, issueNumber) {
           projectItems(first: 10) {
             nodes {
               id
-              project { id title }
+              project { id title updatedAt }
             }
           }
         }
@@ -221,6 +256,27 @@ async function getIssueProjectItems(pat, owner, repo, issueNumber) {
     { owner, repo, number: issueNumber }
   );
   return data.repository.issue.projectItems.nodes;
+}
+
+// The managed `project` label for a session is derived, not entered: it's the
+// title of the GitHub Project the issue belongs to (the most recently updated
+// one when an issue sits on several boards), or null when the issue is on no
+// board. Callers fall back to the repo when this returns null.
+export async function fetchIssueProjectTitle(pat, repo, issueNumber) {
+  if (!pat || !issueNumber || issueNumber <= 0) return null;
+  if (!repo || !/^[^/\s]+\/[^/\s]+$/.test(repo)) return null;
+  const [owner, name] = repo.split('/');
+  let items;
+  try {
+    items = await getIssueProjectItems(pat, owner, name, issueNumber);
+  } catch (err) {
+    console.warn('[Takt] fetchIssueProjectTitle failed:', err.message);
+    return null;
+  }
+  const projects = (items || []).map((n) => n.project).filter(Boolean);
+  if (!projects.length) return null;
+  projects.sort((a, b) => (b.updatedAt || '').localeCompare(a.updatedAt || ''));
+  return projects[0].title || null;
 }
 
 async function getProjectField(pat, projectId, fieldName) {

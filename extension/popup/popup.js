@@ -68,9 +68,14 @@
     const issueLabel = currentSession.issueNumber > 0
       ? `#${currentSession.issueNumber} ${escapeHtml(currentSession.issueTitle || '')}`
       : escapeHtml(currentSession.issueTitle || 'Untitled');
+    // Lead with the project (the primary dimension); fall back to repo for
+    // sessions that predate project tracking or were started without one.
+    const heading = currentSession.project
+      || currentSession.repo
+      || 'Untitled';
     activeSection.innerHTML = `
       <div class="active">
-        <div class="active-repo">${escapeHtml(currentSession.repo)}</div>
+        <div class="active-repo">${escapeHtml(heading)}</div>
         <div class="active-issue">${issueLabel}</div>
         <div class="active-timer ${timerClass}" id="timer-display">${formatElapsed(elapsed)}</div>
         <div class="active-controls">
@@ -116,12 +121,13 @@
     sessionsList.innerHTML = sessions
       .slice(0, 5)
       .map((s) => {
-        // issueNumber=0 entries (manual / no issue) show the title instead
-        // of a #0 reference — keeps the recent list readable for meetings,
-        // PM, email time.
-        const ref = s.issueNumber > 0
-          ? `${escapeHtml(s.repo)}#${s.issueNumber}`
-          : escapeHtml(s.issueTitle || s.repo);
+        // Lead with the project label. issueNumber=0 entries (manual / no
+        // issue) show the title instead of a #0 reference — keeps the recent
+        // list readable for meetings, PM, email time.
+        const primary = s.project || s.repo || '';
+        const ref = s.issueNumber > 0 && s.repo
+          ? `${escapeHtml(primary)} · ${escapeHtml(s.repo)}#${s.issueNumber}`
+          : escapeHtml(primary || s.issueTitle || 'Untitled');
         return `
         <li>
           <span class="session-ref">${ref}</span>

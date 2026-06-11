@@ -22,6 +22,14 @@ class Settings(BaseSettings):
         default="EU", description="BigQuery dataset location (region/multi-region)."
     )
 
+    # Billing/cost data for the analytics API. The billing dataset is shared
+    # across environments (not env-scoped like bq_dataset). The GCP export
+    # table name is billing-account-specific, hence configurable.
+    billing_dataset: str = Field(default="billing_export")
+    billing_export_table: str = Field(
+        default="gcp_billing_export_v1_017235_F96AC3_C2A61A"
+    )
+
     # GitHub
     github_org: str = Field(default="alive-industries")
     github_api_base: str = Field(default="https://api.github.com")
@@ -56,6 +64,24 @@ class Settings(BaseSettings):
     @property
     def audit_log_table(self) -> str:
         return f"{self.gcp_project}.{self.bq_dataset}.audit_log"
+
+    # --- Billing/cost tables (analytics API) ---
+
+    @property
+    def gcp_billing_table(self) -> str:
+        return f"{self.gcp_project}.{self.billing_dataset}.{self.billing_export_table}"
+
+    @property
+    def cost_summary_view(self) -> str:
+        return f"{self.gcp_project}.{self.billing_dataset}.v_cost_summary"
+
+    @property
+    def external_costs_table(self) -> str:
+        return f"{self.gcp_project}.{self.billing_dataset}.external_costs"
+
+    @property
+    def project_budgets_table(self) -> str:
+        return f"{self.gcp_project}.{self.billing_dataset}.project_budgets"
 
 
 @lru_cache(maxsize=1)

@@ -31,6 +31,13 @@ class AdminRequired(TaktError):
         super().__init__(message, status.HTTP_403_FORBIDDEN)
 
 
+class BadRequest(TaktError):
+    code = "bad_request"
+
+    def __init__(self, message: str = "Bad request."):
+        super().__init__(message, status.HTTP_400_BAD_REQUEST)
+
+
 class NotFound(TaktError):
     code = "not_found"
 

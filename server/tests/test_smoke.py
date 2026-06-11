@@ -234,6 +234,108 @@ def test_inconclusive_org_role_leaves_member_unchanged(monkeypatch) -> None:
         app.dependency_overrides.clear()
 
 
+def test_admin_cannot_demote_self(monkeypatch) -> None:
+    """An admin editing their own row to a lower role/status is rejected."""
+    client, upserts, headers = _auth_client(
+        monkeypatch, org_role="admin", existing=_member("admin", "manual")
+    )
+    try:
+        # Self-demotion → 400 bad_request.
+        resp = client.post(
+            "/v1/members", headers=headers, json={"github_login": "octo", "role": "member"}
+        )
+        assert resp.status_code == 400
+        assert resp.json()["detail"]["code"] == "bad_request"
+        # Self-revoke → 400 too.
+        resp = client.post(
+            "/v1/members", headers=headers, json={"github_login": "octo", "status": "revoked"}
+        )
+        assert resp.status_code == 400
+        # Editing someone else is still fine.
+        resp = client.post(
+            "/v1/members", headers=headers, json={"github_login": "other", "role": "member"}
+        )
+        assert resp.status_code == 200
+        assert upserts and upserts[-1].github_login == "other"
+    finally:
+        app.dependency_overrides.clear()
+
+
+def test_analytics_in_openapi() -> None:
+    with TestClient(app) as client:
+        paths = client.get("/openapi.json").json()["paths"]
+        for p in (
+            "/v1/analytics/time",
+            "/v1/analytics/cost-summary",
+            "/v1/analytics/gcp-costs",
+            "/v1/analytics/external-costs",
+            "/v1/analytics/budgets",
+        ):
+            assert p in paths
+
+
+def _key_headers() -> dict:
+    """The api-key header when one is configured (the local .env sets it), so
+    these tests reach the handler. No Authorization/PAT — analytics is key-only."""
+    from app.config import get_settings
+
+    key = get_settings().api_key
+    return {"X-Takt-Api-Key": key} if key else {}
+
+
+def test_analytics_is_key_only_no_pat(monkeypatch) -> None:
+    """Analytics endpoints need no GitHub PAT — only the api key. The service
+    layer is mocked so we don't touch BigQuery."""
+    from app.services import analytics as analytics_svc
+
+    monkeypatch.setattr(
+        analytics_svc, "time_query", lambda **kw: [{"group": "Dawbell", "hours": 1.5, "entries": 2}]
+    )
+    with TestClient(app) as client:
+        resp = client.get("/v1/analytics/time?group_by=project", headers=_key_headers())
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["group_by"] == "project"
+        assert body["rows"][0]["group"] == "Dawbell"
+
+
+def test_analytics_bad_group_by(monkeypatch) -> None:
+    """An invalid group_by surfaces as 400 bad_request from the service whitelist."""
+    with TestClient(app) as client:
+        resp = client.get("/v1/analytics/time?group_by=bogus", headers=_key_headers())
+        assert resp.status_code == 400
+        assert resp.json()["detail"]["code"] == "bad_request"
+
+
+def test_analytics_requires_api_key(monkeypatch) -> None:
+    """With TAKT_API_KEY set, analytics endpoints are gated by the api key."""
+    import app.config as config_module
+    import app.main as main_module
+
+    monkeypatch.setenv("TAKT_API_KEY", "shh-secret")
+    config_module.get_settings.cache_clear()
+    importlib.reload(main_module)
+    try:
+        with TestClient(main_module.app) as client:
+            # Missing key → 401 invalid_api_key (before any handler runs).
+            resp = client.get("/v1/analytics/cost-summary")
+            assert resp.status_code == 401
+            assert resp.json()["detail"]["code"] == "invalid_api_key"
+            # Correct key → reaches the handler (mock the service to avoid BQ).
+            from app.services import analytics as analytics_svc
+
+            monkeypatch.setattr(analytics_svc, "cost_summary", lambda **kw: [])
+            resp = client.get(
+                "/v1/analytics/cost-summary", headers={"X-Takt-Api-Key": "shh-secret"}
+            )
+            assert resp.status_code == 200
+            assert resp.json() == {"count": 0, "rows": []}
+    finally:
+        monkeypatch.delenv("TAKT_API_KEY", raising=False)
+        config_module.get_settings.cache_clear()
+        importlib.reload(main_module)
+
+
 def test_api_key_gate(monkeypatch) -> None:
     """When TAKT_API_KEY is set, /v1/* requires a matching X-Takt-Api-Key."""
     import app.config as config_module

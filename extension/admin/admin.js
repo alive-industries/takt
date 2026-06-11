@@ -57,6 +57,8 @@
 
   // --- Gate ---
 
+  let currentLogin = null; // the signed-in admin — used to prevent self-lockout
+
   async function checkAccess() {
     const ping = await send('BACKEND_PING');
     if (!ping?.ok) {
@@ -65,6 +67,7 @@
       return false;
     }
     const me = ping.me || {};
+    currentLogin = me.login || null;
     if (me.role !== 'admin') {
       gateEl.classList.add('visible');
       gateEl.textContent = `Access denied. You are signed in as ${me.login} (role: ${me.role}). Only admins can view this page.`;
@@ -87,15 +90,20 @@
       const roleBadge = `<span class="badge badge--${m.role}">${m.role}</span>`;
       const statusBadge = `<span class="badge badge--${m.status}">${m.status}</span>`;
       const sourceBadge = `<span class="badge badge--${m.source === 'org' ? 'org' : 'manual'}">${m.source}</span>`;
+      // You can't demote or revoke yourself (the backend enforces this too) —
+      // disable the buttons on your own row so you can't lock yourself out.
+      const isSelf = m.github_login === currentLogin;
+      const selfAttr = isSelf ? ' disabled title="You can\'t change your own role/access"' : '';
+      const youTag = isSelf ? ' <span class="muted">(you)</span>' : '';
       tr.innerHTML = `
-        <td><strong>${escapeHtml(m.github_login)}</strong></td>
+        <td><strong>${escapeHtml(m.github_login)}</strong>${youTag}</td>
         <td>${roleBadge}</td>
         <td>${statusBadge}</td>
         <td>${sourceBadge}</td>
         <td class="muted">${fmtDate(m.added_at)}</td>
         <td class="actions-cell">
-          <button class="btn btn--secondary" data-act="toggle-role">${m.role === 'admin' ? 'Make member' : 'Make admin'}</button>
-          <button class="btn btn--secondary" data-act="toggle-status">${m.status === 'active' ? 'Revoke' : 'Reactivate'}</button>
+          <button class="btn btn--secondary" data-act="toggle-role"${selfAttr}>${m.role === 'admin' ? 'Make member' : 'Make admin'}</button>
+          <button class="btn btn--secondary" data-act="toggle-status"${selfAttr}>${m.status === 'active' ? 'Revoke' : 'Reactivate'}</button>
         </td>
       `;
       tbody.appendChild(tr);
@@ -251,6 +259,8 @@
       .filter((cb) => cb.checked)
       .map((cb) => cb.dataset.title);
 
+    // Projects are managed in their own card (immediate save); the config
+    // Save only owns default_field_name + excluded_projects.
     const payload = {
       default_field_name: defaultFieldInput.value.trim() || null,
       excluded_projects: excluded,

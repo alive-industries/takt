@@ -4,6 +4,12 @@ Tiny FastAPI service that fronts BigQuery for the Takt Chrome extension.
 Verifies a GitHub PAT on every request, enforces an allowlist of approved
 members, and writes time-tracking sessions to BigQuery.
 
+## Analytics API
+
+A read-only, API-key-authenticated surface for PMs/dashboards to pull time and
+cost data out of BigQuery (Takt sessions + `billing_export`). See
+[ANALYTICS_API.md](ANALYTICS_API.md).
+
 ## Why a backend?
 
 The extension itself stays buildless and client-side. The backend exists to:
@@ -27,9 +33,11 @@ server/
       me.py             # GET  /v1/me
       sessions.py       # POST/GET/DELETE /v1/sessions
       admin.py          # /v1/config, /v1/members
+      analytics.py      # GET /v1/analytics/* (read-only, key-only — see ANALYTICS_API.md)
     services/
       github.py         # PAT -> user, org-membership check (cached)
       bq.py             # Thin BigQuery layer
+      analytics.py      # Read-only analytics queries (time + billing/cost)
   scripts/
     bootstrap.sh        # Create dataset + tables + seed first admin
   tests/

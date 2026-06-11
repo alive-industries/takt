@@ -2,7 +2,7 @@
   'use strict';
 
   const sessionsBody = document.getElementById('sessions-body');
-  const filterRepo = document.getElementById('filter-repo');
+  const filterProject = document.getElementById('filter-project');
   const filterFrom = document.getElementById('filter-from');
   const filterTo = document.getElementById('filter-to');
   const summaryCount = document.getElementById('summary-count');
@@ -174,11 +174,11 @@
 
   // --- Render ---
 
-  // Apply the repo filter (date/range filtering already happened on the
+  // Apply the project filter (date/range filtering already happened on the
   // cache lookup). Returns the array used by both the table and the CSV.
   function getVisibleSessions() {
-    const repo = filterRepo.value;
-    return repo ? allSessions.filter((s) => s.repo === repo) : allSessions;
+    const project = filterProject.value;
+    return project ? allSessions.filter((s) => s.project === project) : allSessions;
   }
 
   // True only for repo values that look like a real GitHub `owner/name`
@@ -197,7 +197,7 @@
 
     if (sessions.length === 0) {
       sessionsBody.innerHTML =
-        '<tr><td colspan="7" class="empty-state">No time entries found.</td></tr>';
+        '<tr><td colspan="8" class="empty-state">No time entries found.</td></tr>';
       return;
     }
 
@@ -208,9 +208,12 @@
         const editTitle = editable ? ' title="Click to edit"' : '';
         const repoIsGh = isGithubRepo(s.repo);
         const hasIssue = s.issueNumber > 0;
+        const projectCell = s.project
+          ? escapeHtml(s.project)
+          : '<span class="muted">—</span>';
         const repoCell = repoIsGh
           ? `<a href="https://github.com/${escapeHtml(s.repo)}" target="_blank">${escapeHtml(s.repo)}</a>`
-          : escapeHtml(s.repo);
+          : (s.repo ? escapeHtml(s.repo) : '<span class="muted">—</span>');
         // issueNumber=0 is the manual-entry "no linked issue" sentinel.
         // Render the title as-is and skip the GitHub link in that case
         // so the table doesn't show a phantom #0 link that would 404.
@@ -226,6 +229,7 @@
         return `
           <tr data-sid="${escapeHtml(s.sessionId || '')}">
             <td class="muted">${formatDate(s.completedAt)}</td>
+            <td>${projectCell}</td>
             <td>${repoCell}</td>
             <td>${issueCell}</td>
             <td class="mono${editableClass}" data-col="duration"${editTitle}>${formatDuration(s.durationMs)}</td>
@@ -364,10 +368,11 @@
         ? `"${s.replace(/"/g, '""')}"` : s;
     };
 
-    const headers = ['Date', 'Repo', 'Issue #', 'Issue Title', 'Duration', 'Hours'];
+    const headers = ['Date', 'Project', 'Repo', 'Issue #', 'Issue Title', 'Duration', 'Hours'];
     const rows = sessions.map((s) => [
       formatDateISO(s.completedAt),
-      s.repo,
+      s.project || '',
+      s.repo || '',
       s.issueNumber,
       s.issueTitle || '',
       formatDuration(s.durationMs),
@@ -375,7 +380,7 @@
     ]);
 
     const totalHours = sessions.reduce((sum, s) => sum + toHours(s.durationMs), 0);
-    rows.push(['Total', '', '', '', '', totalHours.toFixed(2)]);
+    rows.push(['Total', '', '', '', '', '', totalHours.toFixed(2)]);
 
     const csv = [headers, ...rows].map((r) => r.map(escCsv).join(',')).join('\n');
 
@@ -391,16 +396,16 @@
   // --- Init ---
 
   function populateFilters() {
-    const repos = [...new Set(allSessions.map((s) => s.repo))].sort();
-    const prev = filterRepo.value;
-    filterRepo.innerHTML = '<option value="">All repos</option>';
-    for (const r of repos) {
+    const projects = [...new Set(allSessions.map((s) => s.project).filter(Boolean))].sort();
+    const prev = filterProject.value;
+    filterProject.innerHTML = '<option value="">All projects</option>';
+    for (const p of projects) {
       const opt = document.createElement('option');
-      opt.value = r;
-      opt.textContent = r;
-      filterRepo.appendChild(opt);
+      opt.value = p;
+      opt.textContent = p;
+      filterProject.appendChild(opt);
     }
-    if (prev && repos.includes(prev)) filterRepo.value = prev;
+    if (prev && projects.includes(prev)) filterProject.value = prev;
   }
 
   function setDefaultDateRange() {
@@ -448,7 +453,7 @@
     // chrome.storage.local.settings.knownReposByOrg. Fire-and-forget — modal
     // works fine without it (falls back to previously-tracked repos).
     sendMessage('FETCH_USER_REPOS').catch(() => {});
-    // Same for the user's org list — populates the new Organization dropdown.
+    // Same for the user's org list — populates the Organization dropdown.
     sendMessage('FETCH_USER_ORGS').catch(() => {});
   }
 
@@ -487,10 +492,12 @@
     activeTimerClock.classList.toggle('active-timer-clock--paused', !running);
     activeTimerClock.textContent = formatDuration(computeElapsedMs(s));
     activeTimerToggle.textContent = running ? 'Pause' : 'Resume';
-    // Meta line = repo (+ #issue when linked). Mirrors popup formatting.
-    const ref = s.issueNumber > 0
-      ? `${s.repo} · #${s.issueNumber}`
-      : s.repo;
+    // Meta line = project (+ repo / #issue when present). Mirrors popup formatting.
+    const parts = [];
+    if (s.project) parts.push(s.project);
+    if (s.repo) parts.push(s.issueNumber > 0 ? `${s.repo} · #${s.issueNumber}` : s.repo);
+    else if (s.issueNumber > 0) parts.push(`#${s.issueNumber}`);
+    const ref = parts.join(' · ') || 'Untitled';
     activeTimerMeta.textContent = running ? `Tracking · ${ref}` : `Paused · ${ref}`;
     activeTimerTitle.textContent = s.issueTitle || (s.issueNumber > 0 ? `Issue #${s.issueNumber}` : 'Untitled');
     if (running) startActiveTimerInterval();
@@ -622,26 +629,27 @@
   });
 
   // Date filter changes -> different range -> refetch + reconcile.
-  // Repo filter is purely client-side; just re-render.
-  filterRepo.addEventListener('change', render);
+  // Project filter is purely client-side; just re-render.
+  filterProject.addEventListener('change', render);
   filterFrom.addEventListener('change', refresh);
   filterTo.addEventListener('change', refresh);
   btnExport.addEventListener('click', exportCsv);
 
   // --- Add-entry modal ---
   //
-  // Cascading dropdowns: repo -> project (optional) -> issue (optional).
-  // When the user picks an issue we auto-fill the title field; without an
-  // issue (meetings, PM, email) the title field becomes the entry name
-  // and `issueNumber=0` is sent to the backend as the "no linked issue"
-  // sentinel. Repo list is restricted to the alive-industries org server-
-  // side (FETCH_USER_REPOS).
+  // Project (a managed label, MANDATORY) is the primary field. Repo is an
+  // optional link, selected independently via Org -> Repo. Picking a repo
+  // populates the optional Issue dropdown from that repo's issues; choosing
+  // an issue auto-fills the title and lets the STOP/add path sync tracked
+  // time into the issue's GitHub Project field. Without an issue (meetings,
+  // PM, email) the title field becomes the entry name and `issueNumber=0`
+  // is sent as the "no linked issue" sentinel. Repo list is restricted to
+  // the selected org server-side (FETCH_USER_REPOS).
 
   const btnAdd = document.getElementById('btn-add');
   const addModal = document.getElementById('add-modal');
   const addOrgSelect = document.getElementById('add-org');
   const addRepoSelect = document.getElementById('add-repo');
-  const addProjectSelect = document.getElementById('add-project');
   const addIssueSelect = document.getElementById('add-issue-select');
   const addTitleInput = document.getElementById('add-title');
   const addTitleHint = document.getElementById('add-title-hint');
@@ -658,8 +666,7 @@
   let addDurationHandle = null;
   // Cached lookups so we can resolve a selection back to its data after
   // the user clicks Submit/Start without re-fetching.
-  let projectsByRepo = new Map();      // repo -> [{ id, title, number }]
-  let issuesByProject = new Map();     // projectId -> [{ number, title, repo }]
+  let issuesByRepo = new Map();        // repo -> [{ number, title, state }]
 
   function populateOrgSelect(orgs, selected) {
     const list = [...new Set(orgs || [])].sort();
@@ -700,30 +707,6 @@
     }
   }
 
-  function setProjectSelectState(state, projects) {
-    if (state === 'loading') {
-      addProjectSelect.innerHTML = '<option value="">Loading projects…</option>';
-      addProjectSelect.disabled = true;
-      return;
-    }
-    if (state === 'idle') {
-      addProjectSelect.innerHTML = '<option value="">Pick a repo first</option>';
-      addProjectSelect.disabled = true;
-      return;
-    }
-    if (state === 'error') {
-      addProjectSelect.innerHTML = '<option value="">(error fetching projects)</option>';
-      addProjectSelect.disabled = false;
-      return;
-    }
-    // ready
-    addProjectSelect.disabled = false;
-    addProjectSelect.innerHTML = '<option value="">No project</option>' +
-      (projects || []).map((p) =>
-        `<option value="${escapeHtml(p.id)}">${escapeHtml(p.title)}</option>`
-      ).join('');
-  }
-
   function setIssueSelectState(state, issues) {
     if (state === 'loading') {
       addIssueSelect.innerHTML = '<option value="">Loading issues…</option>';
@@ -731,7 +714,7 @@
       return;
     }
     if (state === 'idle') {
-      addIssueSelect.innerHTML = '<option value="">Pick a project first</option>';
+      addIssueSelect.innerHTML = '<option value="">Pick a repo first</option>';
       addIssueSelect.disabled = true;
       return;
     }
@@ -751,7 +734,6 @@
   async function onOrgChange() {
     const org = addOrgSelect.value;
     // Reset the downstream cascade — the picked repo no longer applies.
-    setProjectSelectState('idle');
     setIssueSelectState('idle');
     if (!org) {
       setRepoSelectState('idle');
@@ -776,44 +758,21 @@
 
   async function onRepoChange() {
     const repo = addRepoSelect.value;
-    setIssueSelectState('idle');
     if (!repo) {
-      setProjectSelectState('idle');
-      return;
-    }
-    if (projectsByRepo.has(repo)) {
-      setProjectSelectState('ready', projectsByRepo.get(repo));
-      return;
-    }
-    setProjectSelectState('loading');
-    const resp = await sendMessage('FETCH_REPO_PROJECTS', { repo });
-    if (!resp?.ok) {
-      setProjectSelectState('error');
-      return;
-    }
-    projectsByRepo.set(repo, resp.projects);
-    setProjectSelectState('ready', resp.projects);
-  }
-
-  async function onProjectChange() {
-    const projectId = addProjectSelect.value;
-    if (!projectId) {
       setIssueSelectState('idle');
       return;
     }
-    const repo = addRepoSelect.value;
-    const cacheKey = `${projectId}|${repo}`;
-    if (issuesByProject.has(cacheKey)) {
-      setIssueSelectState('ready', issuesByProject.get(cacheKey));
+    if (issuesByRepo.has(repo)) {
+      setIssueSelectState('ready', issuesByRepo.get(repo));
       return;
     }
     setIssueSelectState('loading');
-    const resp = await sendMessage('FETCH_PROJECT_ISSUES', { projectId, repo });
+    const resp = await sendMessage('FETCH_REPO_ISSUES', { repo });
     if (!resp?.ok) {
       setIssueSelectState('error');
       return;
     }
-    issuesByProject.set(cacheKey, resp.issues);
+    issuesByRepo.set(repo, resp.issues);
     setIssueSelectState('ready', resp.issues);
   }
 
@@ -827,9 +786,8 @@
       return;
     }
     addTitleHint.textContent = '(autofilled — edit if needed)';
-    const projectId = addProjectSelect.value;
     const repo = addRepoSelect.value;
-    const issues = issuesByProject.get(`${projectId}|${repo}`) || [];
+    const issues = issuesByRepo.get(repo) || [];
     const match = issues.find((i) => i.number === issueNumber);
     if (match) addTitleInput.value = match.title;
   }
@@ -844,9 +802,7 @@
     addDurationInput.value = '';
     addDurationHandle = self.TaktTime.bindTimeInput(addDurationInput, { initialMs: 0 });
 
-    projectsByRepo = new Map();
-    issuesByProject = new Map();
-    setProjectSelectState('idle');
+    issuesByRepo = new Map();
     setIssueSelectState('idle');
 
     // Render cached orgs/repos (settings.knownOrgs, settings.knownReposByOrg
@@ -855,6 +811,7 @@
     // parallel; when they land we re-render, preserving any user selection.
     const { settings = {} } = await chrome.storage.local.get('settings');
     const cachedOrgs = settings.knownOrgs || [];
+
     // Default selection: the primary Takt org so existing users see no
     // behavioural change on first open.
     const defaultOrg = cachedOrgs.includes('alive-industries')
@@ -991,7 +948,6 @@
   addStartBtn.addEventListener('click', startTrackingFromModal);
   addOrgSelect.addEventListener('change', onOrgChange);
   addRepoSelect.addEventListener('change', onRepoChange);
-  addProjectSelect.addEventListener('change', onProjectChange);
   addIssueSelect.addEventListener('change', onIssueChange);
   addModal.addEventListener('click', (e) => {
     if (e.target === addModal) closeAddModal();

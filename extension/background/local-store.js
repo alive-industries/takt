@@ -14,7 +14,8 @@
 // converting to/from the backend wire format):
 //   {
 //     sessionId: string,
-//     repo: string,
+//     project: string | null,     // user-selected label; null for issue-page timers
+//     repo: string | null,        // owner/name — optional link
 //     issueNumber: number,
 //     issueTitle: string | null,
 //     issueUrl: string | null,
@@ -48,7 +49,8 @@ async function save(cache) {
 export function fromBackendSession(s) {
   return {
     sessionId: s.session_id,
-    repo: s.repo,
+    project: s.project ?? null,
+    repo: s.repo ?? null,
     issueNumber: s.issue_number,
     issueTitle: s.issue_title,
     issueUrl: s.issue_url,
@@ -69,7 +71,8 @@ export function fromBackendSession(s) {
 export function toBackendPayload(r) {
   return {
     session_id: r.sessionId,
-    repo: r.repo,
+    project: r.project ?? null,
+    repo: r.repo ?? null,
     issue_number: r.issueNumber,
     issue_title: r.issueTitle ?? null,
     issue_url: r.issueUrl ?? null,
@@ -127,7 +130,7 @@ export async function removeSession(sessionId) {
 }
 
 // Synchronously available shape for filter/sort. Date filters are inclusive.
-export async function listSessions({ from, to, repo, limit = 1000 } = {}) {
+export async function listSessions({ from, to, repo, project, limit = 1000 } = {}) {
   const cache = await load();
   let arr = Object.values(cache.byId);
 
@@ -140,6 +143,7 @@ export async function listSessions({ from, to, repo, limit = 1000 } = {}) {
     arr = arr.filter((s) => s.completedAt < toMs);
   }
   if (repo) arr = arr.filter((s) => s.repo === repo);
+  if (project) arr = arr.filter((s) => s.project === project);
 
   arr.sort((a, b) => b.completedAt - a.completedAt);
   return arr.slice(0, limit);
@@ -209,7 +213,8 @@ export async function migrateFromCompletedSessions() {
     if (cache.byId[sessionId]) continue; // already in cache
     cache.byId[sessionId] = {
       sessionId,
-      repo: s.repo,
+      project: s.project ?? null,
+      repo: s.repo ?? null,
       issueNumber: s.issueNumber,
       issueTitle: s.issueTitle ?? null,
       issueUrl: null,

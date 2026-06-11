@@ -402,8 +402,8 @@
     </div>
 
     <div class="filters">
-      <label>Repo</label>
-      <select id="filter-repo"><option value="">All repos</option></select>
+      <label>Project</label>
+      <select id="filter-project"><option value="">All projects</option></select>
       <label>From</label>
       <input type="date" id="filter-from">
       <label>To</label>
@@ -426,6 +426,7 @@
         <thead>
           <tr>
             <th>Date</th>
+            <th>Project</th>
             <th>Repo</th>
             <th>Issue</th>
             <th>Duration</th>
@@ -459,15 +460,9 @@
           </select>
         </div>
         <div class="form-row">
-          <label for="add-project">Project <span class="muted">(optional)</span></label>
-          <select id="add-project" disabled>
-            <option value="">Pick a repo first</option>
-          </select>
-        </div>
-        <div class="form-row">
           <label for="add-issue-select">Issue <span class="muted">(optional)</span></label>
           <select id="add-issue-select" disabled>
-            <option value="">Pick a project first</option>
+            <option value="">Pick a repo first</option>
           </select>
         </div>
         <div class="form-row">

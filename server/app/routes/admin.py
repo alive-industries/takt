@@ -5,6 +5,7 @@ from datetime import UTC, datetime
 from fastapi import APIRouter, Depends
 
 from app.auth import Caller, get_caller, require_admin
+from app.errors import BadRequest
 from app.models import Member, MemberUpdate, OrgConfig, OrgConfigUpdate
 from app.services import bq
 
@@ -34,6 +35,15 @@ def list_members() -> list[Member]:
 
 @router.post("/members", response_model=Member)
 def upsert_member(update: MemberUpdate, caller: Caller = Depends(require_admin)) -> Member:
+    # Guard against self-lockout: an admin can't demote or revoke themselves.
+    # (They can still edit anyone else; this just prevents the "I removed my own
+    # admin and got locked out" trap.)
+    if update.github_login == caller.user.login:
+        if update.role is not None and update.role != "admin":
+            raise BadRequest("You can't remove your own admin role.")
+        if update.status is not None and update.status != "active":
+            raise BadRequest("You can't revoke your own access.")
+
     existing = bq.get_member(update.github_login)
     member = Member(
         github_login=update.github_login,
