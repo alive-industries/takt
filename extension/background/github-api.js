@@ -43,13 +43,15 @@ export async function fetchOrgProjects(pat, org) {
     `query ($org: String!) {
       organization(login: $org) {
         projectsV2(first: 50, orderBy: { field: UPDATED_AT, direction: DESC }) {
-          nodes { id title }
+          nodes { id title closed }
         }
       }
     }`,
     { org }
   );
-  return data.organization.projectsV2.nodes.map((p) => ({ ...p, org }));
+  return data.organization.projectsV2.nodes
+    .filter((p) => !p.closed)
+    .map(({ closed, ...p }) => ({ ...p, org }));
 }
 
 export async function fetchAllProjects(pat) {

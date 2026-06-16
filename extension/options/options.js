@@ -150,7 +150,7 @@
       // Auto-discover orgs and projects
       const result = await sendMessage('FETCH_ALL_PROJECTS', { pat });
       if (!result?.ok) {
-        showStatus(statusEl, `Failed to fetch projects: ${result?.error || 'Unknown error'}`, 'error');
+        showStatus(statusEl, `Failed to fetch projects: ${result?.error?.message || result?.error || 'Unknown error'}`, 'error');
         return;
       }
 

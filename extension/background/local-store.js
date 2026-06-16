@@ -14,6 +14,7 @@
 // converting to/from the backend wire format):
 //   {
 //     sessionId: string,
+//     githubUser: string | null,  // whose time this is (admins see other users)
 //     project: string | null,     // user-selected label; null for issue-page timers
 //     repo: string | null,        // owner/name — optional link
 //     issueNumber: number,
@@ -49,6 +50,7 @@ async function save(cache) {
 export function fromBackendSession(s) {
   return {
     sessionId: s.session_id,
+    githubUser: s.github_user ?? null,
     project: s.project ?? null,
     repo: s.repo ?? null,
     issueNumber: s.issue_number,

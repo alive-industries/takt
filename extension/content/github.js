@@ -170,6 +170,15 @@
 
   // --- UI rendering ---
 
+  // Human ref for the active session. Timers started from the Add-entry
+  // modal can have no repo (project-only) — fall back to the project label.
+  function sessionRef(session) {
+    if (!session) return 'another task';
+    return session.issueNumber > 0 && session.repo
+      ? `${session.repo}#${session.issueNumber}`
+      : (session.repo || session.project || 'another task');
+  }
+
   function renderContainer(container, issue) {
     // Active session on a different issue
     if (
@@ -182,7 +191,7 @@
       // leaving only the hover title tooltip). data-action="BLOCKED" routes
       // to the notice without sending a START the backend would reject.
       container.innerHTML = `
-        <button class="takt-btn takt-btn--blocked" data-action="BLOCKED" title="Timer active on ${currentSession.repo}#${currentSession.issueNumber}">
+        <button class="takt-btn takt-btn--blocked" data-action="BLOCKED" title="Timer active on ${sessionRef(currentSession)}">
           <span>\u25B6</span> Track time
         </button>
       `;
@@ -276,10 +285,7 @@
       case 'BLOCKED': {
         // A timer is already running on another issue. Show the same notice
         // the hover tooltip carries, so a click isn't silent.
-        const ref = currentSession
-          ? `${currentSession.repo}#${currentSession.issueNumber}`
-          : 'another task';
-        showStatusMessage(container, `Timer already active on ${ref}`, 'warning', 6000);
+        showStatusMessage(container, `Timer already active on ${sessionRef(currentSession)}`, 'warning', 6000);
         break;
       }
       case 'START': {

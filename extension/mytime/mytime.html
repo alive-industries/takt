@@ -178,6 +178,14 @@
       box-shadow: 0 0 0 2px rgba(9, 105, 218, 0.3);
     }
     .duration-editable { cursor: text; }
+    /* User column/filter — only meaningful for admins, who see (and can
+       log) other members' time. Toggled via body.is-admin from mytime.js. */
+    .col-user { display: none; }
+    body.is-admin th.col-user,
+    body.is-admin td.col-user { display: table-cell; }
+    body.is-admin span.col-user { display: inline-flex; align-items: center; gap: 12px; }
+    .form-row--admin { display: none; }
+    body.is-admin .form-row--admin { display: block; }
     .duration-editable:hover {
       background: #ddf4ff;
       border-radius: 4px;
@@ -404,6 +412,8 @@
     <div class="filters">
       <label>Project</label>
       <select id="filter-project"><option value="">All projects</option></select>
+      <span class="col-user"><label>User</label>
+      <select id="filter-user"><option value="">All users</option></select></span>
       <label>From</label>
       <input type="date" id="filter-from">
       <label>To</label>
@@ -426,6 +436,7 @@
         <thead>
           <tr>
             <th>Date</th>
+            <th class="col-user">User</th>
             <th>Project</th>
             <th>Repo</th>
             <th>Issue</th>
@@ -447,17 +458,31 @@
         <button class="modal-close" id="add-close" aria-label="Close">&times;</button>
       </div>
       <div class="modal-body">
-        <div class="form-row">
-          <label for="add-org">Organization</label>
-          <select id="add-org">
-            <option value="">Loading orgs…</option>
+        <div class="form-row form-row--admin">
+          <label for="add-user">Log for <span class="muted">(admin — leave as yourself unless entering someone else's hours)</span></label>
+          <select id="add-user">
+            <option value="">Myself</option>
           </select>
         </div>
         <div class="form-row">
-          <label for="add-repo">Repo</label>
-          <select id="add-repo" disabled>
-            <option value="">Pick an organization first</option>
+          <label for="add-project">Project <span class="muted" id="add-project-hint">(or pick a repo below)</span></label>
+          <select id="add-project">
+            <option value="">No project — use repo</option>
           </select>
+        </div>
+        <div class="form-row form-row--inline">
+          <div>
+            <label for="add-org">Organization <span class="muted">(optional)</span></label>
+            <select id="add-org">
+              <option value="">Loading orgs…</option>
+            </select>
+          </div>
+          <div>
+            <label for="add-repo">Repo <span class="muted">(optional)</span></label>
+            <select id="add-repo" disabled>
+              <option value="">Pick an organization first</option>
+            </select>
+          </div>
         </div>
         <div class="form-row">
           <label for="add-issue-select">Issue <span class="muted">(optional)</span></label>

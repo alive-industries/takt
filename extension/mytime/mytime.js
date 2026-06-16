@@ -3,6 +3,7 @@
 
   const sessionsBody = document.getElementById('sessions-body');
   const filterProject = document.getElementById('filter-project');
+  const filterUser = document.getElementById('filter-user');
   const filterFrom = document.getElementById('filter-from');
   const filterTo = document.getElementById('filter-to');
   const summaryCount = document.getElementById('summary-count');
@@ -24,6 +25,13 @@
    * syncedToProject, projectTitles, taktVersion, syncStatus, syncedAt.
    */
   let allSessions = [];
+  // Resolved identity from the backend (/v1/me via BACKEND_PING). Admins
+  // get the User column/filter and the "Log for" picker — the backend
+  // returns ALL members' sessions to admins, and they can write on behalf
+  // of others.
+  let me = null; // { login, role }
+  let members = []; // [{ github_login, role, status }] — admins only
+  const isAdmin = () => me?.role === 'admin';
   // Whether the active filter range is fully covered by the local cache
   // (last 30 days). Used to decide if we can serve from cache or have to
   // wait for the backend.
@@ -174,11 +182,15 @@
 
   // --- Render ---
 
-  // Apply the project filter (date/range filtering already happened on the
-  // cache lookup). Returns the array used by both the table and the CSV.
+  // Apply the project/user filters (date/range filtering already happened
+  // on the cache lookup). Returns the array used by both the table and CSV.
   function getVisibleSessions() {
     const project = filterProject.value;
-    return project ? allSessions.filter((s) => s.project === project) : allSessions;
+    const user = filterUser.value;
+    let sessions = allSessions;
+    if (project) sessions = sessions.filter((s) => s.project === project);
+    if (user) sessions = sessions.filter((s) => s.githubUser === user);
+    return sessions;
   }
 
   // True only for repo values that look like a real GitHub `owner/name`
@@ -197,7 +209,7 @@
 
     if (sessions.length === 0) {
       sessionsBody.innerHTML =
-        '<tr><td colspan="8" class="empty-state">No time entries found.</td></tr>';
+        '<tr><td colspan="9" class="empty-state">No time entries found.</td></tr>';
       return;
     }
 
@@ -229,6 +241,7 @@
         return `
           <tr data-sid="${escapeHtml(s.sessionId || '')}">
             <td class="muted">${formatDate(s.completedAt)}</td>
+            <td class="col-user muted">${escapeHtml(s.githubUser || '—')}</td>
             <td>${projectCell}</td>
             <td>${repoCell}</td>
             <td>${issueCell}</td>
@@ -236,6 +249,9 @@
             <td class="mono">${toHours(s.durationMs).toFixed(2)}</td>
             <td class="td-sync">${syncBadgeHtml(s.syncStatus)}</td>
             <td class="td-actions">
+              ${editable ? `<button class="btn btn--sm btn-edit" title="Edit entry">
+                <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor"><path d="M11.013 1.427a1.75 1.75 0 0 1 2.474 0l1.086 1.086a1.75 1.75 0 0 1 0 2.474l-8.61 8.61c-.21.21-.47.364-.756.445l-3.251.93a.75.75 0 0 1-.927-.928l.929-3.25c.081-.286.235-.547.445-.758l8.61-8.61Zm.176 4.823L9.75 4.81l-6.286 6.287a.253.253 0 0 0-.064.108l-.558 1.953 1.953-.558a.253.253 0 0 0 .108-.064Zm1.238-3.763a.25.25 0 0 0-.354 0L10.811 3.75l1.439 1.44 1.263-1.263a.25.25 0 0 0 0-.354Z"/></svg>
+              </button>` : ''}
               <button class="btn btn--danger btn--sm btn-delete" title="Remove entry">
                 <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor"><path d="M11 1.75V3h2.25a.75.75 0 0 1 0 1.5H2.75a.75.75 0 0 1 0-1.5H5V1.75C5 .784 5.784 0 6.75 0h2.5C10.216 0 11 .784 11 1.75ZM4.496 6.675l.66 6.6a.25.25 0 0 0 .249.225h5.19a.25.25 0 0 0 .249-.225l.66-6.6a.75.75 0 0 1 1.492.149l-.66 6.6A1.748 1.748 0 0 1 10.595 15h-5.19a1.75 1.75 0 0 1-1.741-1.575l-.66-6.6a.75.75 0 1 1 1.492-.15ZM6.5 1.75V3h3V1.75a.25.25 0 0 0-.25-.25h-2.5a.25.25 0 0 0-.25.25Z"/></svg>
               </button>
@@ -244,11 +260,18 @@
       })
       .join('');
 
-    // Wire delete buttons
+    // Wire delete + edit buttons
     sessionsBody.querySelectorAll('.btn-delete').forEach((btn) => {
       btn.addEventListener('click', (e) => {
         const tr = e.currentTarget.closest('tr');
         deleteRow(tr);
+      });
+    });
+    sessionsBody.querySelectorAll('.btn-edit').forEach((btn) => {
+      btn.addEventListener('click', (e) => {
+        const tr = e.currentTarget.closest('tr');
+        const session = allSessions.find((x) => x.sessionId === tr.dataset.sid);
+        if (session) openEditModal(session);
       });
     });
 
@@ -368,9 +391,10 @@
         ? `"${s.replace(/"/g, '""')}"` : s;
     };
 
-    const headers = ['Date', 'Project', 'Repo', 'Issue #', 'Issue Title', 'Duration', 'Hours'];
+    const headers = ['Date', 'User', 'Project', 'Repo', 'Issue #', 'Issue Title', 'Duration', 'Hours'];
     const rows = sessions.map((s) => [
       formatDateISO(s.completedAt),
+      s.githubUser || '',
       s.project || '',
       s.repo || '',
       s.issueNumber,
@@ -380,7 +404,7 @@
     ]);
 
     const totalHours = sessions.reduce((sum, s) => sum + toHours(s.durationMs), 0);
-    rows.push(['Total', '', '', '', '', '', totalHours.toFixed(2)]);
+    rows.push(['Total', '', '', '', '', '', '', totalHours.toFixed(2)]);
 
     const csv = [headers, ...rows].map((r) => r.map(escCsv).join(',')).join('\n');
 
@@ -406,6 +430,21 @@
       filterProject.appendChild(opt);
     }
     if (prev && projects.includes(prev)) filterProject.value = prev;
+
+    // User filter (admins only — non-admins only ever see their own rows).
+    const users = [...new Set([
+      ...allSessions.map((s) => s.githubUser).filter(Boolean),
+      ...members.map((m) => m.github_login),
+    ])].sort();
+    const prevUser = filterUser.value;
+    filterUser.innerHTML = '<option value="">All users</option>';
+    for (const u of users) {
+      const opt = document.createElement('option');
+      opt.value = u;
+      opt.textContent = u;
+      filterUser.appendChild(opt);
+    }
+    if (prevUser && users.includes(prevUser)) filterUser.value = prevUser;
   }
 
   function setDefaultDateRange() {
@@ -455,6 +494,21 @@
     sendMessage('FETCH_USER_REPOS').catch(() => {});
     // Same for the user's org list — populates the Organization dropdown.
     sendMessage('FETCH_USER_ORGS').catch(() => {});
+    // And the org's GitHub Projects — populates the Project picker.
+    sendMessage('FETCH_ALL_PROJECTS').catch(() => {});
+
+    // Resolve identity. Admins get the User column/filter and the
+    // "Log for" picker (logging hours on behalf of other members).
+    const ping = await sendMessage('BACKEND_PING');
+    me = ping?.ok ? ping.me : null;
+    if (isAdmin()) {
+      document.body.classList.add('is-admin');
+      const resp = await sendMessage('ADMIN_LIST_MEMBERS');
+      members = (resp?.ok ? resp.members : [])
+        .filter((m) => m.status === 'active');
+      populateFilters();
+      render();
+    }
   }
 
   // --- Active-timer panel ---
@@ -631,23 +685,34 @@
   // Date filter changes -> different range -> refetch + reconcile.
   // Project filter is purely client-side; just re-render.
   filterProject.addEventListener('change', render);
+  filterUser.addEventListener('change', render);
   filterFrom.addEventListener('change', refresh);
   filterTo.addEventListener('change', refresh);
   btnExport.addEventListener('click', exportCsv);
 
-  // --- Add-entry modal ---
+  // --- Add/Edit-entry modal ---
   //
-  // Project (a managed label, MANDATORY) is the primary field. Repo is an
-  // optional link, selected independently via Org -> Repo. Picking a repo
-  // populates the optional Issue dropdown from that repo's issues; choosing
-  // an issue auto-fills the title and lets the STOP/add path sync tracked
-  // time into the issue's GitHub Project field. Without an issue (meetings,
-  // PM, email) the title field becomes the entry name and `issueNumber=0`
-  // is sent as the "no linked issue" sentinel. Repo list is restricted to
-  // the selected org server-side (FETCH_USER_REPOS).
+  // Project comes FIRST and is the primary dimension. The picker lists the
+  // org's GitHub Projects v2 (cached on settings.knownProjects) plus any
+  // labels already used in past sessions. Repo is an optional link below it
+  // (Org -> Repo cascade) — a project does NOT need a repo, and a repo
+  // doesn't need a project (the entry then falls back to the repo's
+  // "<name> — general" label so hours always have a home). Picking a repo
+  // populates the optional Issue dropdown; choosing an issue auto-fills the
+  // title and lets the STOP/add path sync tracked time into the issue's
+  // GitHub Project field. Without an issue (meetings, PM, email) the title
+  // field becomes the entry name and `issueNumber=0` is the "no linked
+  // issue" sentinel.
+  //
+  // The same modal doubles as the EDIT form: every field of an existing
+  // entry can be changed (no more delete-and-re-enter). Admins also get a
+  // "Log for" picker to enter hours on behalf of other members.
 
   const btnAdd = document.getElementById('btn-add');
   const addModal = document.getElementById('add-modal');
+  const addModalTitle = document.getElementById('add-modal-title');
+  const addUserSelect = document.getElementById('add-user');
+  const addProjectSelect = document.getElementById('add-project');
   const addOrgSelect = document.getElementById('add-org');
   const addRepoSelect = document.getElementById('add-repo');
   const addIssueSelect = document.getElementById('add-issue-select');
@@ -667,6 +732,27 @@
   // Cached lookups so we can resolve a selection back to its data after
   // the user clicks Submit/Start without re-fetching.
   let issuesByRepo = new Map();        // repo -> [{ number, title, state }]
+  // null = adding a new entry; a session record = editing that entry.
+  let editingSession = null;
+
+  function populateProjectSelect(knownProjects, selected) {
+    const fromSessions = allSessions.map((s) => s.project).filter(Boolean);
+    const titles = [...new Set([
+      ...(knownProjects || []).map((p) => p.title),
+      ...fromSessions,
+      ...(selected ? [selected] : []),
+    ])].sort((a, b) => a.localeCompare(b));
+    addProjectSelect.innerHTML = '<option value="">No project — use repo</option>' +
+      titles.map((t) => `<option value="${escapeHtml(t)}"${t === selected ? ' selected' : ''}>${escapeHtml(t)}</option>`).join('');
+  }
+
+  function populateUserSelect(selected) {
+    addUserSelect.innerHTML = '<option value="">Myself</option>' +
+      members
+        .filter((m) => m.github_login !== me?.login)
+        .map((m) => `<option value="${escapeHtml(m.github_login)}"${m.github_login === selected ? ' selected' : ''}>${escapeHtml(m.github_login)}</option>`)
+        .join('');
+  }
 
   function populateOrgSelect(orgs, selected) {
     const list = [...new Set(orgs || [])].sort();
@@ -690,7 +776,7 @@
       return;
     }
     addRepoSelect.disabled = false;
-    addRepoSelect.innerHTML = '<option value="">Select a repo…</option>' +
+    addRepoSelect.innerHTML = '<option value="">No repo</option>' +
       merged.map((r) => `<option value="${escapeHtml(r)}"${r === selected ? ' selected' : ''}>${escapeHtml(r)}</option>`).join('');
   }
 
@@ -792,32 +878,59 @@
     if (match) addTitleInput.value = match.title;
   }
 
-  async function openAddModal() {
+  // Shared open path for both modes. `prefill` carries the edit-mode values
+  // (project, repo, issueNumber, issueTitle, completedAt, durationMs).
+  async function openModal(prefill = null) {
     addErrorEl.textContent = '';
-    addDateInput.value = formatDateISO(Date.now());
-    addTitleInput.value = '';
+    addDateInput.value = formatDateISO(prefill?.completedAt ?? Date.now());
+    addTitleInput.value = prefill?.issueTitle || '';
     addTitleHint.textContent = '(required when no issue is linked)';
 
     if (addDurationHandle?.detach) addDurationHandle.detach();
     addDurationInput.value = '';
-    addDurationHandle = self.TaktTime.bindTimeInput(addDurationInput, { initialMs: 0 });
+    addDurationHandle = self.TaktTime.bindTimeInput(addDurationInput, {
+      initialMs: prefill?.durationMs ?? 0,
+    });
 
     issuesByRepo = new Map();
     setIssueSelectState('idle');
+
+    const editing = !!editingSession;
+    addModalTitle.textContent = editing ? 'Edit time entry' : 'Add time entry';
+    addSubmitBtn.textContent = editing ? 'Save changes' : 'Add entry';
+    // A live timer only makes sense for new entries; on-behalf-of can't be
+    // changed after the fact (the row is already owned by someone).
+    addStartBtn.hidden = editing;
+    addUserSelect.disabled = editing;
+    populateUserSelect('');
+
+    // Project picker: cached GitHub Projects + labels seen in sessions.
+    const { settings = {} } = await chrome.storage.local.get('settings');
+    populateProjectSelect(settings.knownProjects, prefill?.project || '');
+    // Refresh the project list in the background, preserving selection.
+    sendMessage('FETCH_ALL_PROJECTS').then((resp) => {
+      if (!resp?.ok || addModal.hidden) return;
+      populateProjectSelect(
+        resp.projects.map((p) => ({ title: p.title })),
+        addProjectSelect.value
+      );
+    }).catch(() => {});
 
     // Render cached orgs/repos (settings.knownOrgs, settings.knownReposByOrg
     // — falling back to legacy knownRepos for the primary Takt org) so the
     // dropdowns aren't empty on first open. Then kick fresh fetches in
     // parallel; when they land we re-render, preserving any user selection.
-    const { settings = {} } = await chrome.storage.local.get('settings');
     const cachedOrgs = settings.knownOrgs || [];
 
-    // Default selection: the primary Takt org so existing users see no
-    // behavioural change on first open.
-    const defaultOrg = cachedOrgs.includes('alive-industries')
-      ? 'alive-industries'
-      : (cachedOrgs[0] || 'alive-industries');
-    const initialOrgs = cachedOrgs.length ? cachedOrgs : [defaultOrg];
+    // Default selection: the entry's repo owner when editing, else the
+    // primary Takt org so existing users see no behavioural change.
+    const prefillRepo = isGithubRepo(prefill?.repo) ? prefill.repo : '';
+    const prefillOrg = prefillRepo ? prefillRepo.split('/')[0] : '';
+    const defaultOrg = prefillOrg
+      || (cachedOrgs.includes('alive-industries')
+        ? 'alive-industries'
+        : (cachedOrgs[0] || 'alive-industries'));
+    const initialOrgs = [...new Set([...(cachedOrgs.length ? cachedOrgs : []), defaultOrg])];
     populateOrgSelect(initialOrgs, defaultOrg);
     addOrgSelect.value = defaultOrg;
 
@@ -827,10 +940,32 @@
       settings.knownReposByOrg?.[defaultOrg]
       || (defaultOrg === 'alive-industries' ? settings.knownRepos : null)
       || [];
-    if (seededRepos.length) {
-      populateRepoSelect(seededRepos, '', defaultOrg);
+    if (seededRepos.length || prefillRepo) {
+      populateRepoSelect(
+        prefillRepo ? [...new Set([...seededRepos, prefillRepo])] : seededRepos,
+        prefillRepo, defaultOrg
+      );
     } else {
       setRepoSelectState('loading');
+    }
+
+    // Editing an entry with a linked repo: load its issues and select the
+    // linked one so the cascade reflects the current state. If the issue
+    // didn't come back in the fetch (old/closed beyond the page size),
+    // inject it — otherwise saving would silently unlink it.
+    if (prefillRepo) {
+      onRepoChange().then(() => {
+        if (addModal.hidden || !(prefill?.issueNumber > 0)) return;
+        const wanted = String(prefill.issueNumber);
+        addIssueSelect.value = wanted;
+        if (addIssueSelect.value !== wanted) {
+          const opt = document.createElement('option');
+          opt.value = wanted;
+          opt.textContent = `#${wanted} ${prefill.issueTitle || ''}`;
+          addIssueSelect.appendChild(opt);
+          addIssueSelect.value = wanted;
+        }
+      });
     }
 
     // Refresh orgs in the background; if new ones appear, re-populate while
@@ -844,20 +979,33 @@
     sendMessage('FETCH_USER_REPOS', { org: defaultOrg }).then((resp) => {
       if (addModal.hidden || addOrgSelect.value !== defaultOrg) return;
       if (resp?.ok) {
-        populateRepoSelect(resp.repos, addRepoSelect.value, defaultOrg);
-      } else if (!seededRepos.length) {
+        const merged = addRepoSelect.value
+          ? [...new Set([...resp.repos, addRepoSelect.value])] : resp.repos;
+        populateRepoSelect(merged, addRepoSelect.value, defaultOrg);
+      } else if (!seededRepos.length && !prefillRepo) {
         setRepoSelectState('error');
       }
     }).catch(() => {
-      if (!addModal.hidden && !seededRepos.length) setRepoSelectState('error');
+      if (!addModal.hidden && !seededRepos.length && !prefillRepo) setRepoSelectState('error');
     });
 
     addModal.hidden = false;
-    addOrgSelect.focus();
+    addProjectSelect.focus();
+  }
+
+  function openAddModal() {
+    editingSession = null;
+    openModal();
+  }
+
+  function openEditModal(session) {
+    editingSession = session;
+    openModal(session);
   }
 
   function closeAddModal() {
     addModal.hidden = true;
+    editingSession = null;
   }
 
   function showAddError(msg) {
@@ -868,16 +1016,23 @@
   //   { ok: true, ...fields }  for a valid form, or
   //   { ok: false, error }     so the caller can show it.
   function readAddForm({ requireDuration }) {
-    const repo = addRepoSelect.value;
-    if (!repo) return { ok: false, error: 'Pick a repo.' };
+    const project = addProjectSelect.value || null;
+    const repo = addRepoSelect.value || null;
+    // A project doesn't need a repo (and vice versa — the entry then takes
+    // the repo's fallback label) but the entry needs at least one home.
+    if (!project && !repo) {
+      return { ok: false, error: 'Pick a project or a repo.' };
+    }
 
     const issueRaw = parseInt(addIssueSelect.value, 10);
-    const issueNumber = Number.isFinite(issueRaw) && issueRaw > 0 ? issueRaw : 0;
+    const issueNumber = repo && Number.isFinite(issueRaw) && issueRaw > 0 ? issueRaw : 0;
 
     const issueTitle = addTitleInput.value.trim();
     if (issueNumber === 0 && !issueTitle) {
       return { ok: false, error: 'Title is required when no issue is linked.' };
     }
+
+    const forUser = addUserSelect.value || null;
 
     if (requireDuration) {
       const durationMs = addDurationHandle?.getMs() ?? null;
@@ -888,9 +1043,12 @@
       if (!dateStr) return { ok: false, error: 'Date is required.' };
       const completedAt = new Date(`${dateStr}T17:00:00`).getTime();
       if (!Number.isFinite(completedAt)) return { ok: false, error: 'Invalid date.' };
-      return { ok: true, repo, issueNumber, issueTitle: issueTitle || null, completedAt, durationMs };
+      return {
+        ok: true, project, repo, issueNumber, issueTitle: issueTitle || null,
+        completedAt, durationMs, forUser,
+      };
     }
-    return { ok: true, repo, issueNumber, issueTitle: issueTitle || null };
+    return { ok: true, project, repo, issueNumber, issueTitle: issueTitle || null, forUser };
   }
 
   async function submitAddEntry() {
@@ -899,20 +1057,43 @@
 
     showAddError('');
     addSubmitBtn.disabled = true;
-    const resp = await sendMessage('ADD_MANUAL_SESSION', {
-      repo: form.repo,
-      issueNumber: form.issueNumber,
-      issueTitle: form.issueTitle,
-      completedAt: form.completedAt,
-      durationMs: form.durationMs,
-    });
+    let resp;
+    if (editingSession) {
+      // Full-field edit. Only send completed_at when the date actually
+      // changed — otherwise an edit would silently reset the entry's
+      // recorded time-of-day to the 17:00 placeholder.
+      const patch = {
+        project: form.project || '',
+        repo: form.repo || '',
+        issue_number: form.issueNumber,
+        issue_title: form.issueTitle,
+        duration_ms: form.durationMs,
+      };
+      if (addDateInput.value !== formatDateISO(editingSession.completedAt)) {
+        patch.completed_at = new Date(form.completedAt).toISOString();
+      }
+      resp = await sendMessage('UPDATE_BACKEND_SESSION', {
+        sessionId: editingSession.sessionId,
+        patch,
+      });
+    } else {
+      resp = await sendMessage('ADD_MANUAL_SESSION', {
+        project: form.project,
+        repo: form.repo,
+        issueNumber: form.issueNumber,
+        issueTitle: form.issueTitle,
+        completedAt: form.completedAt,
+        durationMs: form.durationMs,
+        forUser: form.forUser,
+      });
+    }
     addSubmitBtn.disabled = false;
 
     if (resp?.ok) {
       closeAddModal();
       await refresh();
     } else {
-      showAddError(resp?.error?.message || 'Failed to add entry.');
+      showAddError(resp?.error?.message || 'Failed to save entry.');
     }
   }
 
@@ -922,10 +1103,14 @@
   async function startTrackingFromModal() {
     const form = readAddForm({ requireDuration: false });
     if (!form.ok) return showAddError(form.error);
+    if (form.forUser) {
+      return showAddError('Live timers can only track your own time — use Add entry for others.');
+    }
 
     showAddError('');
     addStartBtn.disabled = true;
     const resp = await sendMessage('START', {
+      project: form.project,
       repo: form.repo,
       issueNumber: form.issueNumber,
       issueTitle: form.issueTitle

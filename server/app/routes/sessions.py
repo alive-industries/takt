@@ -3,17 +3,45 @@ from datetime import datetime
 from fastapi import APIRouter, Depends, Query, status
 
 from app.auth import Caller, get_caller
-from app.errors import NotFound
-from app.models import SessionIn, SessionOut, SessionUpdate
+from app.errors import AdminRequired, BadRequest, NotFound
+from app.models import GitHubUser, SessionIn, SessionOut, SessionUpdate
 from app.services import bq
+from app.services.github import GitHubClient, get_github_client
 
 router = APIRouter(prefix="/v1/sessions", tags=["sessions"])
 
 
 @router.post("", status_code=status.HTTP_201_CREATED)
-def create_session(payload: SessionIn, caller: Caller = Depends(get_caller)) -> dict:
-    """Insert one session. Idempotent on session_id."""
-    bq.insert_session(payload, github_user=caller.user.login, github_user_id=caller.user.id)
+async def create_session(
+    payload: SessionIn,
+    caller: Caller = Depends(get_caller),
+    gh: GitHubClient = Depends(get_github_client),
+) -> dict:
+    """Insert one session. Idempotent on session_id.
+
+    Admins may set `on_behalf_of` to log time for another member (used by
+    Sanne & Jack to enter hours for the team). The row is written under the
+    target's identity so their My Time and all totals attribute correctly.
+    """
+    user = caller.user
+    target = payload.on_behalf_of
+    if target and target != caller.user.login:
+        if not caller.is_admin:
+            raise AdminRequired("Only admins can log time on behalf of others.")
+        member = bq.get_member(target)
+        if member is None or member.status == "revoked":
+            raise BadRequest(f"'{target}' is not an active Takt member.")
+        if member.github_user_id is not None:
+            user_id = member.github_user_id
+        else:
+            # Member row predates id capture — resolve via GitHub.
+            resolved = await gh.get_user_by_login(caller.pat, target)
+            if resolved is None:
+                raise BadRequest(f"GitHub user '{target}' not found.")
+            user_id = resolved.id
+        user = GitHubUser(login=member.github_login, id=user_id)
+
+    bq.insert_session(payload, github_user=user.login, github_user_id=user.id)
     return {"ok": True, "session_id": payload.session_id}
 
 

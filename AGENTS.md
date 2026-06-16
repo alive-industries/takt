@@ -57,6 +57,11 @@ Why this exists: pre-v0.3.0, every My Time open did a synchronous BQ round-trip 
 ## Conventions
 
 - All BQ identifiers snake_case; extension internal state camelCase; conversion lives in `local-store.js#fromBackendSession` / `local-store.js#toBackendPayload`.
+- `project` is the primary dimension of a session and is never blank when a repo is present. Resolution order: explicit selection (Add-entry modal) → the issue's GitHub Project title → the repo fallback label `"<repo-short-name> — general"`. The fallback lives in `service-worker.js#repoFallbackLabel` and `services/bq.py#project_fallback` (keep in sync); the server re-applies it on insert/update as a safety net.
+- A session needs a project OR a repo, not both: project-only entries (no repo) have `repo=NULL`/`""` and `issue_number=0`; repo-only entries get the fallback project label.
+- Admins can log time for other members: `POST /v1/sessions` accepts `on_behalf_of` (server resolves the target's identity and 403s non-admins). The extension sends it from the My Time "Log for" picker; admins also get a User column/filter in My Time.
+- `PUT /v1/sessions/{id}` accepts a full-field patch (project, repo, issue_number, issue_title, completed_at, duration_ms); the server merges against the current row and recomputes `started_at` / `duration_hours` / `issue_url`. The My Time edit modal uses this — no more delete-and-re-enter.
+- Closing the loop on GitHub: every write path (STOP, manual add, edit, delete) recomputes the linked Project's Number field from the authoritative `/v1/sessions/totals`, and STOP + manual add also post the "Tracked N hours" issue comment.
 - `session_id` is a UUID generated at START time on the extension. The server `MERGE`s on `session_id` so retries from the sync queue are idempotent. Backfill of legacy local sessions uses a deterministic SHA-256-derived UUID-shaped id so re-runs are also idempotent.
 - Times in BQ are TIMESTAMP (UTC), serialised as ISO 8601 over the wire.
 - Hours rounded to 0.25 for display/Projects sync; raw `duration_ms` is source of truth.

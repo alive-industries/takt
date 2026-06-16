@@ -76,6 +76,27 @@ class GitHubClient:
         self._user_cache[key] = user
         return user
 
+    async def get_user_by_login(self, pat: str, login: str) -> GitHubUser | None:
+        """Resolve a login to {login, id} via GET /users/{login}.
+
+        Used for admin on-behalf-of session writes when the members table
+        doesn't hold the target's github_user_id yet. Returns None on 404
+        (unknown login); raises on transport errors.
+        """
+        try:
+            resp = await self._client.get(
+                f"{self._base}/users/{login}", headers=self._headers(pat)
+            )
+        except httpx.HTTPError as e:
+            log.warning("github /users/%s request failed: %s", login, e)
+            raise UpstreamError("Could not reach GitHub API.") from e
+        if resp.status_code == 404:
+            return None
+        if resp.status_code != 200:
+            raise UpstreamError(f"GitHub /users/{login} returned {resp.status_code}")
+        data = resp.json()
+        return GitHubUser(login=data["login"], id=data["id"])
+
     async def get_org_role(
         self, pat: str, user: GitHubUser, org: str | None = None
     ) -> str | None:

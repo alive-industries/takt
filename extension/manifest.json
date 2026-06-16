@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Takt",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "GitHub-native time tracker. Track time directly on issues and sync to GitHub Projects.",
   "permissions": ["storage", "alarms"],
   "host_permissions": [

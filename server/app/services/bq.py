@@ -8,7 +8,8 @@ so the schema and row shapes stay obvious.
 from __future__ import annotations
 
 import logging
-from datetime import UTC, datetime
+import re
+from datetime import UTC, datetime, timedelta
 
 from google.api_core import exceptions as gax
 from google.cloud import bigquery
@@ -54,6 +55,19 @@ def _run_dml(sql: str, params: list) -> bigquery.QueryJob:
 # --- Sessions ---
 
 
+def project_fallback(repo: str | None) -> str | None:
+    """Default `project` label when a session has none: the repo's short name
+    plus a "general" marker (e.g. repo "alive-industries/Zyro" → "Zyro — general").
+
+    Keeps every hour attached to a named home instead of an unlabelled pool.
+    Mirrored client-side in service-worker.js#repoFallbackLabel — keep in sync.
+    """
+    if not repo:
+        return None
+    short = repo.split("/")[-1] or repo
+    return f"{short} — general"
+
+
 def insert_session(row: SessionIn, *, github_user: str, github_user_id: int) -> None:
     """Insert a session via MERGE so it goes straight to permanent storage.
 
@@ -89,9 +103,12 @@ def insert_session(row: SessionIn, *, github_user: str, github_user_id: int) -> 
         bigquery.ScalarQueryParameter("session_id", "STRING", row.session_id),
         bigquery.ScalarQueryParameter("github_user", "STRING", github_user),
         bigquery.ScalarQueryParameter("github_user_id", "INT64", github_user_id),
-        # `project` is auto-derived client-side (GitHub Project title, else
-        # repo). Safety net: never store it blank when a repo is present.
-        bigquery.ScalarQueryParameter("project", "STRING", row.project or row.repo or None),
+        # `project` is user-selected or auto-derived client-side (GitHub
+        # Project title, else repo label). Safety net: never store it blank
+        # when a repo is present.
+        bigquery.ScalarQueryParameter(
+            "project", "STRING", row.project or project_fallback(row.repo)
+        ),
         # Coerce a missing repo to "" — older sessions tables created `repo`
         # NOT NULL and BigQuery can't drop that constraint via DDL.
         bigquery.ScalarQueryParameter("repo", "STRING", row.repo or ""),
@@ -185,44 +202,78 @@ def update_session(
     """Patch mutable fields on a session row.
 
     Returns the updated row, or None if the session doesn't exist / caller
-    has no permission. Atomicity: a single UPDATE statement, scoped by
-    session_id + (admin OR ownership).
+    has no permission. We read the current row first (scoped by ownership),
+    merge the patch in Python so derived columns (`started_at`,
+    `duration_hours`, `issue_url`, the `project` fallback) stay coherent,
+    then write everything in a single UPDATE scoped the same way.
     """
     s = get_settings()
 
-    set_clauses: list[str] = []
-    params: list[bigquery.ScalarQueryParameter] = [
-        bigquery.ScalarQueryParameter("id", "STRING", session_id),
-    ]
+    current = _get_session(session_id, caller_login=caller_login, is_admin=is_admin)
+    if current is None or current.deleted_at is not None:
+        return None
+    if not update.model_dump(exclude_none=True):
+        return current  # nothing to update
 
-    if update.duration_ms is not None:
-        # Recompute started_at and duration_hours so the row stays coherent.
-        # started_at = completed_at - INTERVAL duration_ms MILLISECOND.
-        set_clauses.append("duration_ms = @duration_ms")
-        set_clauses.append("duration_hours = @duration_hours")
-        set_clauses.append(
-            "started_at = TIMESTAMP_SUB(completed_at, INTERVAL @duration_ms MILLISECOND)"
-        )
-        hours = round((update.duration_ms / 3_600_000) * 4) / 4
-        params.append(bigquery.ScalarQueryParameter("duration_ms", "INT64", update.duration_ms))
-        params.append(bigquery.ScalarQueryParameter("duration_hours", "FLOAT64", hours))
+    duration_ms = update.duration_ms if update.duration_ms is not None else current.duration_ms
+    completed_at = (
+        update.completed_at if update.completed_at is not None else current.completed_at
+    )
+    repo = update.repo if update.repo is not None else current.repo
+    issue_number = (
+        update.issue_number if update.issue_number is not None else current.issue_number
+    )
+    issue_title = update.issue_title if update.issue_title is not None else current.issue_title
+    # Empty string clears the project → fall back to the repo label so the
+    # row never lands in an unlabelled pool.
+    if update.project is not None:
+        project = update.project or project_fallback(repo)
+    elif update.repo is not None and current.project == project_fallback(current.repo):
+        # The project was a repo fallback and the repo changed — track it.
+        project = project_fallback(repo)
+    else:
+        project = current.project or project_fallback(repo)
 
-    if update.issue_title is not None:
-        set_clauses.append("issue_title = @issue_title")
-        params.append(bigquery.ScalarQueryParameter("issue_title", "STRING", update.issue_title))
-
-    if not set_clauses:
-        # Nothing to update — return the row as-is.
-        return _get_session(session_id, caller_login=caller_login, is_admin=is_admin)
+    duration_hours = round((duration_ms / 3_600_000) * 4) / 4
+    started_at = completed_at - timedelta(milliseconds=duration_ms)
+    is_gh_repo = bool(re.fullmatch(r"[^/\s]+/[^/\s]+", repo or ""))
+    issue_url = (
+        f"https://github.com/{repo}/issues/{issue_number}"
+        if is_gh_repo and issue_number > 0
+        else None
+    )
 
     where = ["session_id = @id", "deleted_at IS NULL"]
+    params: list[bigquery.ScalarQueryParameter] = [
+        bigquery.ScalarQueryParameter("id", "STRING", session_id),
+        bigquery.ScalarQueryParameter("project", "STRING", project),
+        # Legacy tables created `repo` NOT NULL — coerce missing to "".
+        bigquery.ScalarQueryParameter("repo", "STRING", repo or ""),
+        bigquery.ScalarQueryParameter("issue_number", "INT64", issue_number),
+        bigquery.ScalarQueryParameter("issue_title", "STRING", issue_title),
+        bigquery.ScalarQueryParameter("issue_url", "STRING", issue_url),
+        bigquery.ScalarQueryParameter("started_at", "TIMESTAMP", started_at.astimezone(UTC)),
+        bigquery.ScalarQueryParameter(
+            "completed_at", "TIMESTAMP", completed_at.astimezone(UTC)
+        ),
+        bigquery.ScalarQueryParameter("duration_ms", "INT64", duration_ms),
+        bigquery.ScalarQueryParameter("duration_hours", "FLOAT64", duration_hours),
+    ]
     if not is_admin:
         where.append("github_user = @caller")
         params.append(bigquery.ScalarQueryParameter("caller", "STRING", caller_login))
 
     sql = f"""
         UPDATE `{s.sessions_table}`
-        SET {', '.join(set_clauses)}
+        SET project = @project,
+            repo = @repo,
+            issue_number = @issue_number,
+            issue_title = @issue_title,
+            issue_url = @issue_url,
+            started_at = @started_at,
+            completed_at = @completed_at,
+            duration_ms = @duration_ms,
+            duration_hours = @duration_hours
         WHERE {' AND '.join(where)}
     """
     job = _run_dml(sql, params)

@@ -16,7 +16,9 @@ def test_health() -> None:
 
 def test_me_requires_auth() -> None:
     with TestClient(app) as client:
-        resp = client.get("/v1/me")
+        # Send the api key when the local .env configures one, so the test
+        # exercises PAT auth rather than the api-key gate.
+        resp = client.get("/v1/me", headers=_key_headers())
         assert resp.status_code == 401
         assert resp.json()["detail"]["code"] == "invalid_pat"
 
@@ -368,3 +370,168 @@ def test_api_key_gate(monkeypatch) -> None:
     monkeypatch.delenv("TAKT_API_KEY", raising=False)
     config_module.get_settings.cache_clear()
     importlib.reload(main_module)
+
+
+# --- On-behalf-of session writes (admin roles) ---
+
+
+_SESSION_PAYLOAD = {
+    "session_id": "11111111-2222-3333-4444-555555555555",
+    "repo": "alive-industries/zyro",
+    "issue_number": 12,
+    "started_at": "2026-06-12T09:00:00Z",
+    "completed_at": "2026-06-12T10:00:00Z",
+    "duration_ms": 3600000,
+    "duration_hours": 1.0,
+}
+
+
+def test_on_behalf_of_requires_admin(monkeypatch) -> None:
+    from app.services import bq
+
+    client, _, headers = _auth_client(
+        monkeypatch, org_role="member", existing=_member("member", "org")
+    )
+    inserts = []
+    monkeypatch.setattr(bq, "insert_session", lambda row, **kw: inserts.append((row, kw)))
+    try:
+        resp = client.post(
+            "/v1/sessions",
+            headers=headers,
+            json={**_SESSION_PAYLOAD, "on_behalf_of": "sanne"},
+        )
+        assert resp.status_code == 403
+        assert resp.json()["detail"]["code"] == "admin_required"
+        assert inserts == []
+    finally:
+        app.dependency_overrides.clear()
+
+
+def test_on_behalf_of_self_allowed_for_member(monkeypatch) -> None:
+    """Sending your own login in on_behalf_of is a no-op, not an error."""
+    from app.services import bq
+
+    client, _, headers = _auth_client(
+        monkeypatch, org_role="member", existing=_member("member", "org")
+    )
+    inserts = []
+    monkeypatch.setattr(bq, "insert_session", lambda row, **kw: inserts.append((row, kw)))
+    try:
+        resp = client.post(
+            "/v1/sessions",
+            headers=headers,
+            json={**_SESSION_PAYLOAD, "on_behalf_of": "octo"},
+        )
+        assert resp.status_code == 201
+        assert inserts[0][1] == {"github_user": "octo", "github_user_id": 1}
+    finally:
+        app.dependency_overrides.clear()
+
+
+def test_on_behalf_of_admin_writes_target_identity(monkeypatch) -> None:
+    from app.models import Member
+    from app.services import bq
+
+    client, _, headers = _auth_client(
+        monkeypatch, org_role="admin", existing=_member("admin", "org")
+    )
+
+    def fake_get_member(login):
+        if login == "sanne":
+            return Member(github_login="sanne", github_user_id=42, role="member")
+        return _member("admin", "org")
+
+    inserts = []
+    monkeypatch.setattr(bq, "get_member", fake_get_member)
+    monkeypatch.setattr(bq, "insert_session", lambda row, **kw: inserts.append((row, kw)))
+    try:
+        resp = client.post(
+            "/v1/sessions",
+            headers=headers,
+            json={**_SESSION_PAYLOAD, "on_behalf_of": "sanne"},
+        )
+        assert resp.status_code == 201
+        assert inserts[0][1] == {"github_user": "sanne", "github_user_id": 42}
+    finally:
+        app.dependency_overrides.clear()
+
+
+def test_on_behalf_of_unknown_member_rejected(monkeypatch) -> None:
+    from app.services import bq
+
+    client, _, headers = _auth_client(
+        monkeypatch, org_role="admin", existing=_member("admin", "org")
+    )
+    inserts = []
+    monkeypatch.setattr(
+        bq, "get_member", lambda login: None if login == "ghost" else _member("admin", "org")
+    )
+    monkeypatch.setattr(bq, "insert_session", lambda row, **kw: inserts.append((row, kw)))
+    try:
+        resp = client.post(
+            "/v1/sessions",
+            headers=headers,
+            json={**_SESSION_PAYLOAD, "on_behalf_of": "ghost"},
+        )
+        assert resp.status_code == 400
+        assert inserts == []
+    finally:
+        app.dependency_overrides.clear()
+
+
+# --- Full-field session edit ---
+
+
+def test_session_update_accepts_full_patch(monkeypatch) -> None:
+    from app.models import SessionOut
+    from app.services import bq
+
+    client, _, headers = _auth_client(
+        monkeypatch, org_role="member", existing=_member("member", "org")
+    )
+    captured = {}
+
+    def fake_update(session_id, update, *, caller_login, is_admin):
+        captured["update"] = update
+        return SessionOut(
+            **_SESSION_PAYLOAD,
+            github_user=caller_login,
+            github_user_id=1,
+            inserted_at="2026-06-12T10:00:01Z",
+        )
+
+    monkeypatch.setattr(bq, "update_session", fake_update)
+    try:
+        resp = client.put(
+            "/v1/sessions/abc",
+            headers=headers,
+            json={
+                "project": "Zyro",
+                "repo": "alive-industries/zyro",
+                "issue_number": 7,
+                "issue_title": "New title",
+                "completed_at": "2026-06-10T17:00:00Z",
+                "duration_ms": 1800000,
+            },
+        )
+        assert resp.status_code == 200
+        u = captured["update"]
+        assert u.project == "Zyro"
+        assert u.repo == "alive-industries/zyro"
+        assert u.issue_number == 7
+        assert u.duration_ms == 1800000
+        assert u.completed_at is not None
+    finally:
+        app.dependency_overrides.clear()
+
+
+# --- Project fallback label ---
+
+
+def test_project_fallback_label() -> None:
+    from app.services.bq import project_fallback
+
+    assert project_fallback("alive-industries/Zyro") == "Zyro — general"
+    assert project_fallback("Zyro") == "Zyro — general"
+    assert project_fallback(None) is None
+    assert project_fallback("") is None
