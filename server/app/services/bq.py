@@ -162,10 +162,11 @@ def list_sessions(
         where.append("completed_at < @to_ts")
         params.append(bigquery.ScalarQueryParameter("to_ts", "TIMESTAMP", to_ts))
 
+    where_sql = f"WHERE {' AND '.join(where)}" if where else ""
     sql = f"""
         SELECT *
         FROM `{s.sessions_table}`
-        WHERE {' AND '.join(where)}
+        {where_sql}
         ORDER BY completed_at DESC
         LIMIT @limit
     """
