@@ -90,19 +90,45 @@ which needs:
 
 ## API surface
 
-| Method | Path                | Who          | Purpose                          |
-|--------|---------------------|--------------|----------------------------------|
-| GET    | `/health`           | public       | Liveness                         |
-| GET    | `/v1/me`            | any member   | Identity + role + status         |
-| POST   | `/v1/sessions`      | any member   | Insert one session (idempotent)  |
-| GET    | `/v1/sessions`      | any member   | List own; admins can `?user=`    |
-| DELETE | `/v1/sessions/:id`  | owner/admin  | Soft-delete                      |
-| GET    | `/v1/config`        | any member   | Read org config                  |
-| PUT    | `/v1/config`        | admin        | Update org config                |
-| GET    | `/v1/members`       | admin        | List members                     |
-| POST   | `/v1/members`       | admin        | Add / promote / revoke           |
+| Method | Path                | Who          | Purpose                                        |
+|--------|---------------------|--------------|------------------------------------------------|
+| GET    | `/health`           | public       | Liveness                                       |
+| GET    | `/v1/me`            | any member   | Identity + role + status                       |
+| POST   | `/v1/sessions`      | any member   | Insert one session (idempotent on session_id)  |
+| GET    | `/v1/sessions`      | any member   | List own; admins can `?user=`                  |
+| GET    | `/v1/sessions/totals` | any member | Sum of non-deleted hours for repo+issue        |
+| PUT    | `/v1/sessions/:id`  | owner/admin  | Patch duration / issue_title                   |
+| DELETE | `/v1/sessions/:id`  | owner/admin  | Soft-delete (sets `deleted_at`)                |
+| GET    | `/v1/config`        | any member   | Read org config                                |
+| PUT    | `/v1/config`        | admin        | Update org config                              |
+| GET    | `/v1/members`       | admin        | List members                                   |
+| POST   | `/v1/members`       | admin        | Add / promote / revoke                         |
 
 All authenticated requests use `Authorization: Bearer <github-pat>`.
+
+### `GET /v1/sessions`
+
+Query params (all optional):
+
+| Param           | Type      | Default | Notes                                              |
+|-----------------|-----------|---------|----------------------------------------------------|
+| `user`          | string    | —       | Admin-only filter by GitHub login.                 |
+| `repo`          | string    | —       | Filter by `owner/name`.                            |
+| `from`          | datetime  | —       | `completed_at >= from` (ISO 8601).                 |
+| `to`            | datetime  | —       | `completed_at < to` (ISO 8601).                    |
+| `limit`         | int       | 500     | Max 5000.                                          |
+| `include_deleted` | bool    | false   | Include soft-deleted sessions in the response.     |
+
+By default only active (`deleted_at IS NULL`) sessions are returned. Pass
+`include_deleted=true` to also receive soft-deleted sessions. Each session
+object includes two deletion fields:
+
+- `deleted` (bool) — `true` when the session has been soft-deleted.
+- `deleted_at` (datetime \| null) — ISO 8601 timestamp of the soft-delete, or `null` for active sessions. Format matches `started_at`, `completed_at`, `inserted_at`.
+
+This lets the extension reconcile its local cache when a session is deleted by
+a peer or admin: list with `include_deleted=true`, then drop or mark any cached
+row whose `deleted` is `true`.
 
 ## Auth flow per request
 

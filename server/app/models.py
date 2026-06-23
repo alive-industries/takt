@@ -3,7 +3,7 @@
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, computed_field
 
 # --- Identity ---
 
@@ -64,6 +64,12 @@ class SessionOut(SessionIn):
     github_user_id: int
     inserted_at: datetime
     deleted_at: datetime | None = None
+
+    @computed_field
+    @property
+    def deleted(self) -> bool:
+        """True when the session has been soft-deleted (deleted_at is set)."""
+        return self.deleted_at is not None
 
 
 class SessionUpdate(BaseModel):

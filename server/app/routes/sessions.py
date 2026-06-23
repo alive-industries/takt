@@ -25,8 +25,21 @@ def get_sessions(
     from_ts: datetime | None = Query(default=None, alias="from"),
     to_ts: datetime | None = Query(default=None, alias="to"),
     limit: int = Query(default=500, le=5000),
+    include_deleted: bool = Query(
+        default=False,
+        description=(
+            "Include soft-deleted sessions "
+            "(returned with deleted=true and deleted_at set)."
+        ),
+    ),
 ) -> list[SessionOut]:
-    """List sessions. Non-admins always see their own; admins can pass ?user=."""
+    """List sessions. Non-admins always see their own; admins can pass ?user=.
+
+    By default only active sessions are returned. Pass include_deleted=true to
+    also receive soft-deleted sessions, each marked with deleted=true and a
+    deleted_at timestamp. This lets the extension reconcile its local cache
+    when a session is deleted by a peer or admin.
+    """
     return bq.list_sessions(
         caller_login=caller.user.login,
         is_admin=caller.is_admin,
@@ -35,6 +48,7 @@ def get_sessions(
         from_ts=from_ts,
         to_ts=to_ts,
         limit=limit,
+        include_deleted=include_deleted,
     )
 
 

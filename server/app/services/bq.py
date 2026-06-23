@@ -137,11 +137,12 @@ def list_sessions(
     from_ts: datetime | None = None,
     to_ts: datetime | None = None,
     limit: int = 500,
+    include_deleted: bool = False,
 ) -> list[SessionOut]:
     s = get_settings()
     bq = _client()
 
-    where = ["deleted_at IS NULL"]
+    where: list[str] = [] if include_deleted else ["deleted_at IS NULL"]
     params: list[bigquery.ScalarQueryParameter] = []
 
     if not is_admin:
