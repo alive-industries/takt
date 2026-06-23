@@ -77,12 +77,12 @@ def insert_session(row: SessionIn, *, github_user: str, github_user_id: int) -> 
             session_id, github_user, github_user_id, repo, issue_number,
             issue_title, issue_url, started_at, completed_at, duration_ms,
             duration_hours, source_url, synced_to_project, project_titles,
-            takt_version, client_ts, inserted_at
+            project_ids, takt_version, client_ts, inserted_at
         ) VALUES (
             @session_id, @github_user, @github_user_id, @repo, @issue_number,
             @issue_title, @issue_url, @started_at, @completed_at, @duration_ms,
             @duration_hours, @source_url, @synced_to_project, @project_titles,
-            @takt_version, @client_ts, CURRENT_TIMESTAMP()
+            @project_ids, @takt_version, @client_ts, CURRENT_TIMESTAMP()
         )
     """
     params = [
@@ -107,6 +107,9 @@ def insert_session(row: SessionIn, *, github_user: str, github_user_id: int) -> 
         ),
         bigquery.ArrayQueryParameter(
             "project_titles", "STRING", row.project_titles or []
+        ),
+        bigquery.ArrayQueryParameter(
+            "project_ids", "STRING", row.project_ids or []
         ),
         bigquery.ScalarQueryParameter("takt_version", "STRING", row.takt_version),
         bigquery.ScalarQueryParameter(
@@ -230,7 +233,7 @@ def _get_session(
     session_id: str, *, caller_login: str, is_admin: bool
 ) -> SessionOut | None:
     s = get_settings()
-    where = ["session_id = @id"]
+    where = ["session_id = @id", "deleted_at IS NULL"]
     params: list[bigquery.ScalarQueryParameter] = [
         bigquery.ScalarQueryParameter("id", "STRING", session_id),
     ]

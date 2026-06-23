@@ -166,8 +166,8 @@
 
   // --- Org config ---
 
-  // Cached so Save can rebuild the excluded list using titles even if the
-  // user hasn't fetched fresh project data this session.
+  // Cached so Save can rebuild the excluded list (keyed by stable project id)
+  // even if the user hasn't fetched fresh project data this session.
   let orgProjects = []; // [{ id, title, org }]
   let backendConfig = null;
 
@@ -182,17 +182,22 @@
       return;
     }
 
-    // Merge any titles in `excluded` that aren't in the fetched list (e.g.
-    // archived projects). Show them with a (not currently visible) tag.
-    const known = new Set(orgProjects.map((p) => p.title));
-    const orphanExcluded = [...excluded].filter((t) => !known.has(t));
+    // Exclusions are stored by stable project node id (rename-proof). Legacy
+    // configs stored titles, so match on either. Anything in `excluded` that
+    // matches neither a live id nor a live title is a true orphan (archived
+    // project, or a title left behind by a rename) and is shown separately.
+    const knownIds = new Set(orgProjects.map((p) => p.id));
+    const knownTitles = new Set(orgProjects.map((p) => p.title));
+    const orphanExcluded = [...excluded].filter(
+      (e) => !knownIds.has(e) && !knownTitles.has(e)
+    );
 
     const rows = [];
     for (const p of orgProjects) {
-      const checked = excluded.has(p.title) ? 'checked' : '';
+      const checked = excluded.has(p.id) || excluded.has(p.title) ? 'checked' : '';
       rows.push(`
         <label style="display:flex;align-items:center;gap:8px;padding:6px 12px;border-bottom:1px solid #eaeef2;cursor:pointer;">
-          <input type="checkbox" class="excl-cb" data-title="${escapeHtml(p.title)}" ${checked}>
+          <input type="checkbox" class="excl-cb" data-id="${escapeHtml(p.id)}" ${checked}>
           <span style="flex:1;">${escapeHtml(p.title)}</span>
           <span class="muted" style="font-size:11px;">${escapeHtml(p.org || '')}</span>
         </label>
@@ -201,7 +206,7 @@
     for (const t of orphanExcluded) {
       rows.push(`
         <label style="display:flex;align-items:center;gap:8px;padding:6px 12px;border-bottom:1px solid #eaeef2;cursor:pointer;opacity:0.7;">
-          <input type="checkbox" class="excl-cb" data-title="${escapeHtml(t)}" checked>
+          <input type="checkbox" class="excl-cb" data-id="${escapeHtml(t)}" checked>
           <span style="flex:1;">${escapeHtml(t)}</span>
           <span class="muted" style="font-size:11px;">not currently visible</span>
         </label>
@@ -249,7 +254,7 @@
 
     const excluded = [...excludedListEl.querySelectorAll('.excl-cb')]
       .filter((cb) => cb.checked)
-      .map((cb) => cb.dataset.title);
+      .map((cb) => cb.dataset.id);
 
     const payload = {
       default_field_name: defaultFieldInput.value.trim() || null,

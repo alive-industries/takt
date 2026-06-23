@@ -221,8 +221,12 @@
       for (const proj of discoveredProjects) {
         const row = document.createElement('div');
         row.className = 'project-row';
+        // Identify projects by their stable node id so config survives
+        // renames. `dataset.project` keeps the title for display only.
+        row.dataset.projectId = proj.id;
         row.dataset.project = proj.title;
-        const isExcluded = savedExcluded.includes(proj.title);
+        const isExcluded =
+          savedExcluded.includes(proj.id) || savedExcluded.includes(proj.title);
         if (isExcluded) row.classList.add('project-row--removed');
 
         const nameDiv = document.createElement('div');
@@ -238,7 +242,10 @@
 
         const select = document.createElement('select');
         select.className = 'project-field-select';
+        select.dataset.projectId = proj.id;
         select.dataset.project = proj.title;
+        // Accept a legacy title-keyed mapping until the user re-saves.
+        const savedFieldForProject = savedMappings[proj.id] ?? savedMappings[proj.title];
 
         const defaultOpt = document.createElement('option');
         defaultOpt.value = '';
@@ -249,7 +256,7 @@
           const opt = document.createElement('option');
           opt.value = f.name;
           opt.textContent = f.name;
-          if (savedMappings[proj.title] === f.name) opt.selected = true;
+          if (savedFieldForProject === f.name) opt.selected = true;
           select.appendChild(opt);
         }
 
@@ -304,12 +311,14 @@
     const excludedProjects = [];
 
     for (const row of projectsList.querySelectorAll('.project-row')) {
-      const title = row.dataset.project;
+      // Key by stable node id; fall back to title only if an id is somehow
+      // missing so we never silently drop a project's config.
+      const key = row.dataset.projectId || row.dataset.project;
       if (row.classList.contains('project-row--removed')) {
-        excludedProjects.push(title);
+        excludedProjects.push(key);
       } else {
         const sel = row.querySelector('select');
-        if (sel?.value) projectFields[title] = sel.value;
+        if (sel?.value) projectFields[key] = sel.value;
       }
     }
 

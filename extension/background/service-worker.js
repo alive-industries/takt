@@ -67,9 +67,11 @@ function toBackendSession(completed, syncResult) {
   const isGh = /^[^/\s]+\/[^/\s]+$/.test(repo || '');
   const issueUrl = (isGh && issueNumber > 0)
     ? `https://github.com/${repo}/issues/${issueNumber}` : null;
-  const projectTitles = (syncResult?.results || [])
-    .filter((r) => r.synced)
-    .map((r) => r.project);
+  const syncedResults = (syncResult?.results || []).filter((r) => r.synced);
+  const projectTitles = syncedResults.map((r) => r.project);
+  // Stable Projects v2 node ids alongside the (mutable) titles, so reporting
+  // can group by a key that survives a project rename.
+  const projectIds = syncedResults.map((r) => r.projectId).filter(Boolean);
   const syncedToProject = projectTitles.length > 0;
   const durationHours = Math.round((completed.durationMs / 3600000) * 4) / 4;
 
@@ -86,6 +88,7 @@ function toBackendSession(completed, syncResult) {
     source_url: completed.sourceUrl || null,
     synced_to_project: syncedToProject,
     project_titles: projectTitles,
+    project_ids: projectIds,
     takt_version: TAKT_VERSION,
     client_ts: new Date().toISOString(),
   };
@@ -175,6 +178,7 @@ async function pushCompletedToBackend(completed, syncResult) {
       sessionId: payload.session_id,
       syncedToProject: payload.synced_to_project,
       projectTitles: payload.project_titles,
+      projectIds: payload.project_ids,
       syncStatus: 'synced',
       syncedAt: Date.now(),
     });
@@ -438,14 +442,15 @@ async function handleMessage({ action, payload }) {
       // the project-titles immediately without waiting for the next
       // reconcile from the backend.
       if (syncResult?.results?.length) {
-        const projectTitles = syncResult.results
-          .filter((r) => r.synced)
-          .map((r) => r.project);
+        const synced = syncResult.results.filter((r) => r.synced);
+        const projectTitles = synced.map((r) => r.project);
+        const projectIds = synced.map((r) => r.projectId).filter(Boolean);
         if (projectTitles.length) {
           await cache.upsertSession({
             sessionId: completed.sessionId,
             syncedToProject: true,
             projectTitles,
+            projectIds,
           });
         }
       }

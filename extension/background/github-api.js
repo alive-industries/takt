@@ -316,7 +316,12 @@ export async function syncIssueTimeToProjects(
     return { skipped: true, reason: 'Issue is not linked to any GitHub Project' };
   }
 
+  // Project config (exclusions + per-project field overrides) is keyed by
+  // the stable Projects v2 node id so it survives project renames. Older
+  // configs were keyed by title; we accept either to stay backward
+  // compatible until the config is re-saved (which migrates it to ids).
   const excluded = settings.excludedProjects || [];
+  const projectFields = settings.projectFields || {};
   const results = [];
   // Round to 2 decimals so the GitHub Projects field displays cleanly
   // (it's a Number column, fractional values are fine). The old logic
@@ -330,26 +335,28 @@ export async function syncIssueTimeToProjects(
     const itemId = item.id;
     const projectTitle = item.project.title;
 
-    if (excluded.includes(projectTitle)) {
-      results.push({ project: projectTitle, skipped: true, reason: 'Excluded' });
+    if (excluded.includes(projectId) || excluded.includes(projectTitle)) {
+      results.push({ project: projectTitle, projectId, skipped: true, reason: 'Excluded' });
       continue;
     }
 
-    const fieldName = settings.projectFields?.[projectTitle]
-      || settings.defaultFieldName
-      || settings.fieldName // legacy single-field setting
-      || 'Tracked Time (mins)';
+    const fieldName = projectFields[projectId]
+      ?? projectFields[projectTitle] // legacy title-keyed override
+      ?? settings.defaultFieldName
+      ?? settings.fieldName // legacy single-field setting
+      ?? 'Tracked Time (mins)';
 
     let field;
     try {
       field = await getProjectField(pat, projectId, fieldName);
     } catch (err) {
-      results.push({ project: projectTitle, error: err.message });
+      results.push({ project: projectTitle, projectId, error: err.message });
       continue;
     }
     if (!field) {
       results.push({
         project: projectTitle,
+        projectId,
         skipped: true,
         reason: `No "${fieldName}" field found`,
       });
@@ -358,9 +365,9 @@ export async function syncIssueTimeToProjects(
 
     try {
       await updateTrackedTime(pat, projectId, itemId, field.id, rounded);
-      results.push({ project: projectTitle, synced: true, hours: rounded });
+      results.push({ project: projectTitle, projectId, synced: true, hours: rounded });
     } catch (err) {
-      results.push({ project: projectTitle, error: err.message });
+      results.push({ project: projectTitle, projectId, error: err.message });
     }
   }
 

@@ -25,9 +25,11 @@
 //     durationHours: number,
 //     syncedToProject: boolean,
 //     projectTitles: string[],
+//     projectIds: string[],       // stable Projects v2 node ids (rename-proof)
 //     taktVersion: string | null,
 //     syncStatus: 'pending' | 'synced' | 'dirty',
 //     syncedAt: number | null,     // when last confirmed on backend
+//     deletedAt: number | null,    // soft-delete marker (ms epoch); null = active
 //   }
 
 const KEY = 'sessionCache';
@@ -59,9 +61,15 @@ export function fromBackendSession(s) {
     durationHours: s.duration_hours,
     syncedToProject: !!s.synced_to_project,
     projectTitles: s.project_titles || [],
+    projectIds: s.project_ids || [],
     taktVersion: s.takt_version,
     syncStatus: 'synced',
     syncedAt: Date.now(),
+    // Soft-delete marker. The backend already omits deleted rows from LIST,
+    // so this is normally null — but carry it through so any reader of the
+    // cache (My Time totals, the Projects-field fallback sum) can exclude a
+    // soft-deleted row even before the next reconcile drops it.
+    deletedAt: s.deleted_at ? new Date(s.deleted_at).getTime() : null,
   };
 }
 
@@ -80,6 +88,7 @@ export function toBackendPayload(r) {
     source_url: r.sourceUrl ?? null,
     synced_to_project: !!r.syncedToProject,
     project_titles: r.projectTitles || [],
+    project_ids: r.projectIds || [],
     takt_version: r.taktVersion ?? null,
     client_ts: new Date().toISOString(),
   };
@@ -127,9 +136,11 @@ export async function removeSession(sessionId) {
 }
 
 // Synchronously available shape for filter/sort. Date filters are inclusive.
+// Soft-deleted rows (deletedAt set) are never returned — they must not count
+// toward grouped hours or the My Time list.
 export async function listSessions({ from, to, repo, limit = 1000 } = {}) {
   const cache = await load();
-  let arr = Object.values(cache.byId);
+  let arr = Object.values(cache.byId).filter((s) => !s.deletedAt);
 
   if (from) {
     const fromMs = typeof from === 'number' ? from : new Date(from).getTime();

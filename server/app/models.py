@@ -45,6 +45,10 @@ class SessionIn(BaseModel):
     source_url: str | None = None
     synced_to_project: bool = False
     project_titles: list[str] = Field(default_factory=list)
+    # Stable Projects v2 node ids, parallel to project_titles. Titles are a
+    # snapshot taken at STOP time and drift when a project is renamed; the ids
+    # don't, so reporting can group by a key that survives renames.
+    project_ids: list[str] = Field(default_factory=list)
     takt_version: str | None = None
     client_ts: datetime | None = None
 
@@ -103,7 +107,11 @@ class MemberUpdate(BaseModel):
 class OrgConfig(BaseModel):
     org_login: str
     default_field_name: str | None = None
+    # Keyed by the stable Projects v2 node id (rename-proof). The extension
+    # still accepts legacy title keys for read until the config is re-saved.
     project_fields: dict[str, str] = Field(default_factory=dict)
+    # Stable Projects v2 node ids (rename-proof); legacy title values are
+    # tolerated for read.
     excluded_projects: list[str] = Field(default_factory=list)
     updated_by: str | None = None
     updated_at: datetime | None = None

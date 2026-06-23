@@ -24,7 +24,8 @@ CREATE TABLE IF NOT EXISTS `cost-tracker-490815.takt.sessions` (
   duration_hours    FLOAT64 NOT NULL,
   source_url        STRING OPTIONS(description="Page URL where the timer ran (issue or project pane)."),
   synced_to_project BOOL,
-  project_titles    ARRAY<STRING>,
+  project_titles    ARRAY<STRING> OPTIONS(description="Project titles at STOP time (mutable snapshot; drifts on rename)."),
+  project_ids       ARRAY<STRING> OPTIONS(description="Stable Projects v2 node ids, parallel to project_titles. Rename-proof grouping key."),
   takt_version      STRING,
   client_ts         TIMESTAMP OPTIONS(description="Client timestamp at push time."),
   inserted_at       TIMESTAMP NOT NULL OPTIONS(description="Server insert timestamp."),
@@ -35,6 +36,11 @@ CLUSTER BY github_user, repo
 OPTIONS(
   description = "Takt time-tracking sessions. One row per stopped timer."
 );
+
+-- Backfill the column onto tables created before project_ids existed.
+-- ADD COLUMN IF NOT EXISTS is idempotent, so this is safe to re-run.
+ALTER TABLE `cost-tracker-490815.takt.sessions`
+  ADD COLUMN IF NOT EXISTS project_ids ARRAY<STRING>;
 
 -- ============================================================================
 -- members: who is allowed to use Takt
@@ -59,8 +65,8 @@ OPTIONS(
 CREATE TABLE IF NOT EXISTS `cost-tracker-490815.takt.org_config` (
   org_login          STRING NOT NULL,
   default_field_name STRING OPTIONS(description="Default Projects v2 NUMBER field for time sync."),
-  project_fields     STRING OPTIONS(description="JSON: {projectTitle: fieldName} per-project overrides."),
-  excluded_projects  ARRAY<STRING>,
+  project_fields     STRING OPTIONS(description="JSON: {projectId: fieldName} per-project overrides (stable id key, rename-proof)."),
+  excluded_projects  ARRAY<STRING> OPTIONS(description="Stable Projects v2 node ids to exclude from sync (rename-proof)."),
   updated_by         STRING,
   updated_at         TIMESTAMP
 )
