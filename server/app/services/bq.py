@@ -19,6 +19,7 @@ from app.models import (
     Member,
     OrgConfig,
     OrgConfigUpdate,
+    Project,
     SessionIn,
     SessionOut,
     SessionUpdate,
@@ -67,8 +68,23 @@ def insert_session(row: SessionIn, *, github_user: str, github_user_id: int) -> 
 
     Idempotency: MERGE on session_id, so retries from the extension's
     sync queue won't double-insert.
+
+    Also upserts any project_ids + titles from the payload into the
+    projects lookup table, so a rename is a single-row update there and
+    all sessions referencing the id reflect the new name.
     """
     s = get_settings()
+
+    # Upsert project lookup rows so titles stay current.
+    if row.project_ids:
+        upsert_projects([
+            Project(project_id=pid, title=title)
+            for pid, title in zip(
+                row.project_ids, row.project_titles or [], strict=False
+            )
+            if pid and title
+        ])
+
     sql = f"""
         MERGE `{s.sessions_table}` T
         USING (SELECT @session_id AS session_id) S
@@ -142,32 +158,31 @@ def list_sessions(
     s = get_settings()
     bq = _client()
 
-    where: list[str] = [] if include_deleted else ["deleted_at IS NULL"]
+    where: list[str] = [] if include_deleted else ["s.deleted_at IS NULL"]
     params: list[bigquery.ScalarQueryParameter] = []
 
     if not is_admin:
-        where.append("github_user = @caller")
+        where.append("s.github_user = @caller")
         params.append(bigquery.ScalarQueryParameter("caller", "STRING", caller_login))
     elif user_filter:
-        where.append("github_user = @user_filter")
+        where.append("s.github_user = @user_filter")
         params.append(bigquery.ScalarQueryParameter("user_filter", "STRING", user_filter))
 
     if repo:
-        where.append("repo = @repo")
+        where.append("s.repo = @repo")
         params.append(bigquery.ScalarQueryParameter("repo", "STRING", repo))
     if from_ts:
-        where.append("completed_at >= @from_ts")
+        where.append("s.completed_at >= @from_ts")
         params.append(bigquery.ScalarQueryParameter("from_ts", "TIMESTAMP", from_ts))
     if to_ts:
-        where.append("completed_at < @to_ts")
+        where.append("s.completed_at < @to_ts")
         params.append(bigquery.ScalarQueryParameter("to_ts", "TIMESTAMP", to_ts))
 
     where_sql = f"WHERE {' AND '.join(where)}" if where else ""
     sql = f"""
-        SELECT *
-        FROM `{s.sessions_table}`
+        {_session_select(s.sessions_table)}
         {where_sql}
-        ORDER BY completed_at DESC
+        ORDER BY s.completed_at DESC
         LIMIT @limit
     """
     params.append(bigquery.ScalarQueryParameter("limit", "INT64", limit))
@@ -235,14 +250,14 @@ def _get_session(
     session_id: str, *, caller_login: str, is_admin: bool
 ) -> SessionOut | None:
     s = get_settings()
-    where = ["session_id = @id", "deleted_at IS NULL"]
+    where = ["s.session_id = @id", "s.deleted_at IS NULL"]
     params: list[bigquery.ScalarQueryParameter] = [
         bigquery.ScalarQueryParameter("id", "STRING", session_id),
     ]
     if not is_admin:
-        where.append("github_user = @caller")
+        where.append("s.github_user = @caller")
         params.append(bigquery.ScalarQueryParameter("caller", "STRING", caller_login))
-    sql = f"SELECT * FROM `{s.sessions_table}` WHERE {' AND '.join(where)} LIMIT 1"
+    sql = f"{_session_select(s.sessions_table)} WHERE {' AND '.join(where)} LIMIT 1"
     rows = list(
         _client()
         .query(sql, job_config=bigquery.QueryJobConfig(query_parameters=params))
@@ -308,6 +323,76 @@ def soft_delete_session(session_id: str, *, caller_login: str, is_admin: bool) -
     """
     job = _run_dml(sql, params)
     return (job.num_dml_affected_rows or 0) > 0
+
+
+# --- Projects (lookup table) ---
+
+
+def upsert_projects(projects: list[Project]) -> None:
+    """Upsert project rows by project_id (MERGE, idempotent).
+
+    Called from insert_session (using the session's project_ids + titles)
+    and from the POST /v1/projects/sync endpoint (batch from the extension
+    or the sync script). A rename is just a title change here — every
+    session referencing the project_id instantly reflects the new name.
+    """
+    if not projects:
+        return
+    s = get_settings()
+    bq = _client()
+    for p in projects:
+        sql = f"""
+            MERGE `{s.projects_table}` T
+            USING (SELECT @project_id AS project_id) S
+            ON T.project_id = S.project_id
+            WHEN MATCHED AND T.title != @title THEN UPDATE SET
+                title = @title,
+                org = COALESCE(@org, T.org),
+                updated_at = CURRENT_TIMESTAMP()
+            WHEN NOT MATCHED THEN INSERT
+                (project_id, title, org, updated_at)
+            VALUES
+                (@project_id, @title, @org, CURRENT_TIMESTAMP())
+        """
+        params = [
+            bigquery.ScalarQueryParameter("project_id", "STRING", p.project_id),
+            bigquery.ScalarQueryParameter("title", "STRING", p.title),
+            bigquery.ScalarQueryParameter("org", "STRING", p.org),
+        ]
+        bq.query(
+            sql, job_config=bigquery.QueryJobConfig(query_parameters=params)
+        ).result()
+
+
+def list_projects() -> list[Project]:
+    """Return all known projects (for GET /v1/projects)."""
+    s = get_settings()
+    sql = f"SELECT project_id, title, org FROM `{s.projects_table}` ORDER BY title"
+    return [Project(**dict(r)) for r in _client().query(sql).result()]
+
+
+def _session_select(table: str) -> str:
+    """SQL snippet that selects session columns with project_titles resolved
+    from the projects lookup table instead of the stale snapshot column.
+
+    All session read paths use this so titles always reflect the current
+    state of the projects table. If a project_id has no matching row in
+    projects (e.g. pre-fix legacy data), we fall back to the stored
+    project_titles snapshot so those rows don't lose their titles.
+    """
+    return f"""
+        SELECT
+            s.* EXCEPT(project_titles),
+            COALESCE(
+                ARRAY(
+                    SELECT p.title
+                    FROM UNNEST(s.project_ids) AS pid
+                    LEFT JOIN `{table}` p ON p.project_id = pid
+                ),
+                s.project_titles
+            ) AS project_titles
+        FROM `{table}` s
+    """
 
 
 # --- Members ---

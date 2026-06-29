@@ -87,6 +87,24 @@ class SessionUpdate(BaseModel):
     issue_title: str | None = None
 
 
+# --- Projects (lookup table) ---
+
+
+class Project(BaseModel):
+    """A GitHub Projects v2 entry in the projects lookup table.
+
+    Sessions reference projects by `project_id` (stable node id). The
+    `title` here is the current name — update this row on a rename and
+    every session that references the id reflects the new name.
+    """
+
+    model_config = ConfigDict(extra="ignore")
+
+    project_id: str = Field(description="Stable GitHub Projects v2 node id.")
+    title: str
+    org: str | None = None
+
+
 # --- Members ---
 
 

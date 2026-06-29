@@ -21,6 +21,7 @@ import {
   getOrgConfig as getBackendOrgConfig,
   putOrgConfig as putBackendOrgConfig,
   getSessionTotals,
+  syncProjects as syncBackendProjects,
 } from './takt-api.js';
 import * as cache from './local-store.js';
 
@@ -173,6 +174,26 @@ async function pushCompletedToBackend(completed, syncResult) {
   const payload = toBackendSession(completed, syncResult);
   try {
     await pushSession(payload);
+
+    // Upsert project lookup rows so the backend always has current titles.
+    // A rename is a single-row update in the projects table; every session
+    // referencing the id reflects the new name on the next read.
+    const syncedResults = (syncResult?.results || []).filter((r) => r.synced);
+    if (syncedResults.length) {
+      const projects = syncedResults
+        .filter((r) => r.projectId && r.project)
+        .map((r) => ({ project_id: r.projectId, title: r.project }));
+      if (projects.length) {
+        try {
+          await syncBackendProjects(projects);
+        } catch (err) {
+          // Non-fatal — the session is already saved; project titles
+          // will be upserted on the next STOP or manual sync.
+          console.warn('[Takt] Project sync failed (non-fatal):', err.message);
+        }
+      }
+    }
+
     // Backend confirmed — update the cache entry's sync metadata.
     await cache.upsertSession({
       sessionId: payload.session_id,

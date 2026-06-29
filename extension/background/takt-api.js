@@ -119,6 +119,21 @@ export async function putOrgConfig(config) {
   return request('PUT', '/v1/config', { body: config });
 }
 
+// --- Projects lookup table ---
+
+export async function getProjects() {
+  return request('GET', '/v1/projects');
+}
+
+// Batch upsert project rows (id + current title) into the lookup table.
+// Called on STOP so the backend always has the current project name; a
+// rename is a single-row update in the projects table and every session
+// referencing the id reflects the new name.
+export async function syncProjects(projects) {
+  // projects: [{ project_id, title, org? }]
+  return request('POST', '/v1/projects/sync', { body: { projects } });
+}
+
 // Health/ping helper for status pip
 export async function ping() {
   try {

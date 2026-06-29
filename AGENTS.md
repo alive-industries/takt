@@ -23,10 +23,27 @@ Syntax-check JS without loading:
 node --check extension/background/service-worker.js   # etc.
 ```
 
+### Project-rename sync (`server/scripts/sync_projects.py`)
+
+Sessions reference projects by stable node id (`project_ids`). The
+`projects` lookup table holds the current title for each id. The extension
+upserts project rows automatically on STOP. To manually refresh (e.g.
+after a batch of renames):
+
+```bash
+cd server
+uv run python scripts/sync_projects.py --pat <github-pat> --dry-run   # preview
+uv run python scripts/sync_projects.py --pat <github-pat>             # apply
+```
+
+PAT needs `project` and `read:org` scope. Fetches all org projects from
+GitHub and upserts into the lookup table. Idempotent — only inserts/updates
+rows where the title changed.
+
 ## Deployment
 
 - BQ dataset: `cost-tracker-490815.takt` in `EU` (matches `billing_export`)
-- Tables: `sessions`, `members`, `org_config`, `audit_log`
+- Tables: `sessions`, `projects`, `members`, `org_config`, `audit_log`
 - First admin seeded: `harveypitt`
 - Cloud Run: `takt-api` in `europe-west1` (planned; not yet deployed)
 - Runtime SA: `takt-api@cost-tracker-490815.iam.gserviceaccount.com` (needs `bigquery.dataEditor` on `takt` + `bigquery.jobUser` on project)

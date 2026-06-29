@@ -24,8 +24,8 @@ CREATE TABLE IF NOT EXISTS `cost-tracker-490815.takt.sessions` (
   duration_hours    FLOAT64 NOT NULL,
   source_url        STRING OPTIONS(description="Page URL where the timer ran (issue or project pane)."),
   synced_to_project BOOL,
-  project_titles    ARRAY<STRING> OPTIONS(description="Project titles at STOP time (mutable snapshot; drifts on rename)."),
-  project_ids       ARRAY<STRING> OPTIONS(description="Stable Projects v2 node ids, parallel to project_titles. Rename-proof grouping key."),
+  project_titles    ARRAY<STRING> OPTIONS(description="Deprecated: legacy snapshot of titles at STOP time. Current titles live in the projects table; reads join on project_ids."),
+  project_ids       ARRAY<STRING> OPTIONS(description="Stable Projects v2 node ids. FK-like reference into the projects table. Rename-proof grouping key."),
   takt_version      STRING,
   client_ts         TIMESTAMP OPTIONS(description="Client timestamp at push time."),
   inserted_at       TIMESTAMP NOT NULL OPTIONS(description="Server insert timestamp."),
@@ -41,6 +41,24 @@ OPTIONS(
 -- ADD COLUMN IF NOT EXISTS is idempotent, so this is safe to re-run.
 ALTER TABLE `cost-tracker-490815.takt.sessions`
   ADD COLUMN IF NOT EXISTS project_ids ARRAY<STRING>;
+
+-- ============================================================================
+-- projects: lookup table for GitHub Projects v2 (rename-proof)
+-- ============================================================================
+-- Sessions reference projects by stable node id (project_ids). This table
+-- holds the current title for each id, so a project rename is a single
+-- UPDATE here — every session that references the id instantly reflects
+-- the new name. The extension upserts rows on STOP; a sync script can
+-- batch-refresh from the GitHub API.
+CREATE TABLE IF NOT EXISTS `cost-tracker-490815.takt.projects` (
+  project_id   STRING NOT NULL OPTIONS(description="Stable GitHub Projects v2 node id. Primary key."),
+  title        STRING NOT NULL OPTIONS(description="Current project title (mutable; updated on rename)."),
+  org          STRING OPTIONS(description="GitHub org login that owns the project."),
+  updated_at   TIMESTAMP NOT NULL OPTIONS(description="Last upsert timestamp.")
+)
+OPTIONS(
+  description = "GitHub Projects v2 lookup table. Sessions reference by project_id; title is mutable."
+);
 
 -- ============================================================================
 -- members: who is allowed to use Takt

@@ -75,6 +75,29 @@ BQ_LOCATION=EU \
 This creates the `takt` dataset, applies the schema, and inserts the first
 admin row in `takt.members`.
 
+## Project renames (lookup table)
+
+Sessions reference projects by stable node id (`project_ids`). The
+`projects` lookup table holds the current title for each id — a rename is
+a single-row UPDATE there, and every session that references the id
+instantly reflects the new name on the next read. The extension upserts
+project rows automatically on STOP.
+
+To manually refresh the lookup table (e.g. after a batch of renames):
+
+```bash
+cd server
+# Dry-run first — shows what would change without writing:
+uv run python scripts/sync_projects.py --pat <github-pat> --dry-run
+
+# Apply:
+uv run python scripts/sync_projects.py --pat <github-pat>
+```
+
+The PAT needs `project` and `read:org` scope. The script fetches all org
+projects from GitHub and upserts them into the lookup table. Idempotent —
+only inserts/updates rows where the title changed.
+
 ## Deploying
 
 ```bash
@@ -103,6 +126,8 @@ which needs:
 | PUT    | `/v1/config`        | admin        | Update org config                              |
 | GET    | `/v1/members`       | admin        | List members                                   |
 | POST   | `/v1/members`       | admin        | Add / promote / revoke                         |
+| GET    | `/v1/projects`      | any member   | List all known projects (current titles)       |
+| POST   | `/v1/projects/sync` | any member   | Batch upsert projects (id + title)             |
 
 All authenticated requests use `Authorization: Bearer <github-pat>`.
 

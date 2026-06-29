@@ -57,6 +57,10 @@ class Settings(BaseSettings):
     def audit_log_table(self) -> str:
         return f"{self.gcp_project}.{self.bq_dataset}.audit_log"
 
+    @property
+    def projects_table(self) -> str:
+        return f"{self.gcp_project}.{self.bq_dataset}.projects"
+
 
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
