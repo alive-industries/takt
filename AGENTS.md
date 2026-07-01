@@ -42,13 +42,32 @@ rows where the title changed.
 
 ## Deployment
 
-- BQ dataset: `cost-tracker-490815.takt` in `EU` (matches `billing_export`)
-- Tables: `sessions`, `projects`, `members`, `org_config`, `audit_log`
+- BQ dataset (prod): `cost-tracker-490815.takt` in `EU` (matches `billing_export`)
+- BQ dataset (test): `cost-tracker-490815.takt_test` in `EU` — used by the `takt-api-test` Cloud Run service ONLY. Keep prod/test data separate.
+- Tables (per dataset): `sessions`, `projects`, `members`, `org_config`, `audit_log`
 - First admin seeded: `harveypitt`
-- Cloud Run: `takt-api` in `europe-west1` (planned; not yet deployed)
-- Runtime SA: `takt-api@cost-tracker-490815.iam.gserviceaccount.com` (needs `bigquery.dataEditor` on `takt` + `bigquery.jobUser` on project)
-- Artifact Registry repo: `takt` in `europe-west1` (planned; not yet created)
-- Bootstrap rerun: `ADMIN_LOGIN=<login> ./server/scripts/bootstrap.sh`
+- Cloud Run: `takt-api` (prod) and `takt-api-test` (test) in `europe-west1`
+- Runtime SA: `takt-api@cost-tracker-490815.iam.gserviceaccount.com` (needs `bigquery.dataEditor` on BOTH `takt` and `takt_test` + `bigquery.jobUser` on project)
+- Artifact Registry repo: `takt` in `europe-west1`
+- Bootstrap rerun (prod): `BQ_DATASET=takt ADMIN_LOGIN=<login> ./server/scripts/bootstrap.sh`
+- Bootstrap test dataset: `BQ_DATASET=takt_test ADMIN_LOGIN=<login> ./server/scripts/bootstrap.sh`
+
+### Prod vs test deploys
+
+`cloudbuild.yaml` defaults to prod (`_SERVICE=takt-api`, `_BQ_DATASET=takt`).
+The test service must override BOTH so it never touches prod data:
+
+```bash
+# prod
+gcloud builds submit --config=server/cloudbuild.yaml .
+# test
+gcloud builds submit --config=server/cloudbuild.yaml . \
+  --substitutions=_SERVICE=takt-api-test,_BQ_DATASET=takt_test
+```
+
+`schema.sql` uses the `__TAKT_DS__` placeholder for `<project>.<dataset>`; it
+must be substituted (bootstrap.sh does this) before applying, so it can target
+either dataset.
 
 ## Storage architecture (local-first)
 

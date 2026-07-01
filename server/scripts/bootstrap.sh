@@ -30,9 +30,13 @@ else
   echo "   dataset already exists"
 fi
 
-echo ">> Applying schema"
-bq --project_id="${GCP_PROJECT}" --location="${BQ_LOCATION}" query \
-  --use_legacy_sql=false < "${SCHEMA_FILE}"
+echo ">> Applying schema to ${GCP_PROJECT}.${BQ_DATASET}"
+# schema.sql uses the placeholder __TAKT_DS__ for <project>.<dataset> so the
+# same DDL can target prod (takt) or a test dataset (takt_test). Substitute
+# it here so the schema lands in the dataset named by BQ_DATASET.
+sed "s/__TAKT_DS__/${GCP_PROJECT}.${BQ_DATASET}/g" "${SCHEMA_FILE}" \
+  | bq --project_id="${GCP_PROJECT}" --location="${BQ_LOCATION}" query \
+      --use_legacy_sql=false
 
 echo ">> Seeding first admin: ${ADMIN_LOGIN}"
 bq --project_id="${GCP_PROJECT}" --location="${BQ_LOCATION}" query \

@@ -282,6 +282,39 @@ export async function postTimeComment(pat, owner, repo, issueNumber, durationHou
   }
 }
 
+// Projects an issue is linked to, minus any the user has excluded. This is
+// the project *association* for reporting / the projects lookup table — it is
+// deliberately independent of syncIssueTimeToProjects, which only reports a
+// project as "synced" when it successfully wrote to a Number field. An issue
+// can sit on a project board that has no such field (or a differently-named
+// one); we still want the session tagged with that project.
+//
+// Returns [{ projectId, title }]. Empty for manual entries (issueNumber<=0),
+// non-GitHub repos, missing PAT, or on any lookup error (association is
+// best-effort and must never block the STOP write).
+export async function getLinkedProjects(pat, repo, issueNumber, settings = {}) {
+  if (!pat || !issueNumber || issueNumber <= 0) return [];
+  if (!repo || !/^[^/\s]+\/[^/\s]+$/.test(repo)) return [];
+  const [owner, name] = repo.split('/');
+  let items;
+  try {
+    items = await getIssueProjectItems(pat, owner, name, issueNumber);
+  } catch (err) {
+    console.warn('[Takt] getLinkedProjects failed:', err.message);
+    return [];
+  }
+  const excluded = settings.excludedProjects || [];
+  const linked = [];
+  for (const item of items) {
+    const projectId = item.project.id;
+    const title = item.project.title;
+    // Exclusions are keyed by stable id (legacy configs used titles).
+    if (excluded.includes(projectId) || excluded.includes(title)) continue;
+    linked.push({ projectId, title });
+  }
+  return linked;
+}
+
 // --- Project field sync ---
 //
 // Overwrites (does NOT add to) the configured Number field on every Project

@@ -1,5 +1,6 @@
 import {
   syncIssueTimeToProjects,
+  getLinkedProjects,
   postTimeComment,
   fetchAllProjects,
   fetchProjectNumberFields,
@@ -57,7 +58,7 @@ function computeElapsed(session) {
 
 // --- Backend payload shaping ---
 
-function toBackendSession(completed, syncResult) {
+function toBackendSession(completed, linkedProjects = []) {
   // Map our internal completed-session shape to the wire format the
   // FastAPI backend expects (see server/app/models.py SessionIn).
   const repo = completed.repo;
@@ -68,12 +69,13 @@ function toBackendSession(completed, syncResult) {
   const isGh = /^[^/\s]+\/[^/\s]+$/.test(repo || '');
   const issueUrl = (isGh && issueNumber > 0)
     ? `https://github.com/${repo}/issues/${issueNumber}` : null;
-  const syncedResults = (syncResult?.results || []).filter((r) => r.synced);
-  const projectTitles = syncedResults.map((r) => r.project);
-  // Stable Projects v2 node ids alongside the (mutable) titles, so reporting
-  // can group by a key that survives a project rename.
-  const projectIds = syncedResults.map((r) => r.projectId).filter(Boolean);
-  const syncedToProject = projectTitles.length > 0;
+  // Project association = the issue's linked projects (minus excluded), NOT
+  // whether a time-field write succeeded. `linkedProjects` is [{projectId,
+  // title}]. Stable ids alongside the (mutable) titles so reporting can group
+  // by a key that survives a project rename.
+  const projectIds = linkedProjects.map((p) => p.projectId).filter(Boolean);
+  const projectTitles = linkedProjects.map((p) => p.title);
+  const syncedToProject = projectIds.length > 0;
   const durationHours = Math.round((completed.durationMs / 3600000) * 4) / 4;
 
   return {
@@ -170,19 +172,18 @@ async function recomputeProjectField(repo, issueNumber) {
   return result;
 }
 
-async function pushCompletedToBackend(completed, syncResult) {
-  const payload = toBackendSession(completed, syncResult);
+async function pushCompletedToBackend(completed, linkedProjects = []) {
+  const payload = toBackendSession(completed, linkedProjects);
   try {
     await pushSession(payload);
 
     // Upsert project lookup rows so the backend always has current titles.
     // A rename is a single-row update in the projects table; every session
     // referencing the id reflects the new name on the next read.
-    const syncedResults = (syncResult?.results || []).filter((r) => r.synced);
-    if (syncedResults.length) {
-      const projects = syncedResults
-        .filter((r) => r.projectId && r.project)
-        .map((r) => ({ project_id: r.projectId, title: r.project }));
+    if (linkedProjects.length) {
+      const projects = linkedProjects
+        .filter((p) => p.projectId && p.title)
+        .map((p) => ({ project_id: p.projectId, title: p.title }));
       if (projects.length) {
         try {
           await syncBackendProjects(projects);
@@ -431,14 +432,31 @@ async function handleMessage({ action, payload }) {
         syncedAt: null,
       });
 
-      // Push to the Takt backend (BigQuery) FIRST. The new GitHub Project
+      // Resolve the issue's linked projects BEFORE the push so the session
+      // row carries project_ids on its (insert-only) MERGE. This is the
+      // project association and is independent of the field-write recompute
+      // below (which needs the row to exist first, for the totals lookup).
+      let linkedProjects = [];
+      try {
+        const { settings = {} } = await chrome.storage.local.get('settings');
+        if (settings.pat) {
+          linkedProjects = await getLinkedProjects(
+            settings.pat, completed.repo, completed.issueNumber, settings
+          );
+        }
+      } catch (err) {
+        console.warn('[Takt] linked-projects lookup (stop) failed:', err.message);
+      }
+
+      // Push to the Takt backend (BigQuery) FIRST. The GitHub Project field
       // sync uses `GET /v1/sessions/totals` to compute the value to write,
       // so the row needs to exist server-side before we recompute. If the
       // push fails it goes to the retry queue (flushQueue does the same
-      // recompute step on drain).
+      // recompute step on drain). The push carries project_ids from
+      // linkedProjects and upserts the projects lookup table.
       let backendResult = null;
       try {
-        backendResult = await pushCompletedToBackend(completed, null);
+        backendResult = await pushCompletedToBackend(completed, linkedProjects);
       } catch (err) {
         backendResult = { error: err.message };
       }
@@ -457,23 +475,6 @@ async function handleMessage({ action, payload }) {
         }
       } else {
         syncResult = { skipped: true, reason: 'Backend push deferred — will sync on retry' };
-      }
-
-      // Mirror the syncResult onto the cached row so the table reflects
-      // the project-titles immediately without waiting for the next
-      // reconcile from the backend.
-      if (syncResult?.results?.length) {
-        const synced = syncResult.results.filter((r) => r.synced);
-        const projectTitles = synced.map((r) => r.project);
-        const projectIds = synced.map((r) => r.projectId).filter(Boolean);
-        if (projectTitles.length) {
-          await cache.upsertSession({
-            sessionId: completed.sessionId,
-            syncedToProject: true,
-            projectTitles,
-            projectIds,
-          });
-        }
       }
 
       // Post comment on the issue. Skip for manual entries (issueNumber=0)
@@ -816,10 +817,22 @@ async function handleMessage({ action, payload }) {
         completedAt,
       };
 
+      // Resolve linked projects before the push so the row carries
+      // project_ids (see the STOP path for why this must precede the push).
+      let linkedProjects = [];
+      try {
+        const { settings = {} } = await chrome.storage.local.get('settings');
+        if (settings.pat) {
+          linkedProjects = await getLinkedProjects(settings.pat, repo, issueNum, settings);
+        }
+      } catch (err) {
+        console.warn('[Takt] linked-projects lookup (add) failed:', err.message);
+      }
+
       // Push to backend. On failure the cache entry stays 'pending' and
       // the sync queue will retry — so from the user's POV the entry is
       // saved either way, and the row's sync badge communicates state.
-      const backendResult = await pushCompletedToBackend(completed, null);
+      const backendResult = await pushCompletedToBackend(completed, linkedProjects);
 
       // Recompute + write the GitHub Project field (only meaningful when
       // there's a linked issue and a project). No-op otherwise.
@@ -850,7 +863,7 @@ async function handleMessage({ action, payload }) {
             durationMs: s.durationMs,
             completedAt: s.completedAt,
           },
-          null
+          [] // legacy entries carry no project association
         );
         await enqueueSession(payload);
         queued.push(stableId);

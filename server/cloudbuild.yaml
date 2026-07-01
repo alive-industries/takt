@@ -6,6 +6,15 @@
 #   _SERVICE        cloud run service name (default: takt-api)
 #   _AR_REPO        artifact registry repo name (default: takt)
 #   _SA             runtime service account email
+#   _BQ_DATASET     BigQuery dataset the service reads/writes (default: takt)
+#
+# Production deploy (defaults):
+#   gcloud builds submit --config=server/cloudbuild.yaml .
+#
+# Test deploy — MUST override BOTH _SERVICE and _BQ_DATASET so the test
+# service targets its own dataset and never touches production `takt`:
+#   gcloud builds submit --config=server/cloudbuild.yaml . \
+#     --substitutions=_SERVICE=takt-api-test,_BQ_DATASET=takt_test
 
 substitutions:
   _REGION: europe-west1
