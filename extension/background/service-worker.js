@@ -13,6 +13,7 @@ import {
 import { enqueueSession, flushQueue, queueLength } from './sync-queue.js';
 import {
   pushSession,
+  getMe as getBackendMe,
   ping as pingBackend,
   listSessions as listBackendSessions,
   updateSession as updateBackendSession,
@@ -22,6 +23,10 @@ import {
   getOrgConfig as getBackendOrgConfig,
   putOrgConfig as putBackendOrgConfig,
   getSessionTotals,
+  listClients as listBackendClients,
+  createClient as createBackendClient,
+  mapClientProject as mapBackendClientProject,
+  mapProjectRepository as mapBackendProjectRepository,
   syncProjects as syncBackendProjects,
 } from './takt-api.js';
 import * as cache from './local-store.js';
@@ -59,41 +64,74 @@ function computeElapsed(session) {
 // --- Backend payload shaping ---
 
 function toBackendSession(completed, linkedProjects = []) {
-  // Map our internal completed-session shape to the wire format the
-  // FastAPI backend expects (see server/app/models.py SessionIn).
-  const repo = completed.repo;
-  const issueNumber = completed.issueNumber;
-  // issueNumber=0 is the manual-entry sentinel (no linked issue) — don't
-  // synthesise a `.../issues/0` URL that would 404 on click. Non-GitHub
-  // repo labels (e.g. "client meeting") get the same treatment.
+  const source = completed.source
+    || (completed.sourceUrl && completed.issueNumber > 0 ? 'github' : 'manual');
+  const orderedProjects = [...linkedProjects].sort((a, b) =>
+    String(a.projectId || '').localeCompare(String(b.projectId || ''))
+  );
+  let selectedProject = completed.reportingProjectId
+    ? { projectId: completed.reportingProjectId, title: completed.project }
+    : orderedProjects[0] || null;
+  if (!selectedProject && source === 'github' && completed.repo) {
+    selectedProject = { projectId: `repo:${completed.repo}`, title: completed.repo };
+  }
+  const entryType = source === 'github'
+    ? 'delivery'
+    : (completed.entryType || (selectedProject ? 'delivery' : 'ops'));
+  const repo = entryType === 'ops' ? null : (completed.repo || null);
+  const issueNumber = entryType === 'ops' ? 0 : (completed.issueNumber || 0);
   const isGh = /^[^/\s]+\/[^/\s]+$/.test(repo || '');
   const issueUrl = (isGh && issueNumber > 0)
     ? `https://github.com/${repo}/issues/${issueNumber}` : null;
-  // Project association = the issue's linked projects (minus excluded), NOT
-  // whether a time-field write succeeded. `linkedProjects` is [{projectId,
-  // title}]. Stable ids alongside the (mutable) titles so reporting can group
-  // by a key that survives a project rename.
-  const projectIds = linkedProjects.map((p) => p.projectId).filter(Boolean);
-  const projectTitles = linkedProjects.map((p) => p.title);
-  const syncedToProject = projectIds.length > 0;
+  const associations = [...orderedProjects];
+  if (selectedProject?.projectId
+      && !associations.some((project) => project.projectId === selectedProject.projectId)) {
+    associations.push(selectedProject);
+  }
+  const projectIds = associations.map((project) => project.projectId).filter(Boolean);
+  const projectTitles = associations.map((project) => project.title);
   const durationHours = Math.round((completed.durationMs / 3600000) * 4) / 4;
+  const githubMetadata = source === 'github'
+    ? {
+        schema_version: 1,
+        repository: repo,
+        issue_number: issueNumber,
+        issue_title: completed.issueTitle || null,
+        issue_url: issueUrl,
+        source_url: completed.sourceUrl || null,
+        linked_projects: associations.map((project) => ({
+          project_id: project.projectId,
+          title: project.title,
+        })),
+      }
+    : {};
 
   return {
     session_id: completed.sessionId,
+    source,
+    type: entryType,
+    client_id: completed.clientId ?? null,
     repo,
+    reporting_project_id: selectedProject?.projectId || null,
+    project: selectedProject?.title || null,
     issue_number: issueNumber,
     issue_title: completed.issueTitle || null,
+    description: completed.description || completed.issueTitle || null,
+    github_metadata: githubMetadata,
     issue_url: issueUrl,
     started_at: new Date(completed.startedAtMs).toISOString(),
     completed_at: new Date(completed.completedAt).toISOString(),
     duration_ms: completed.durationMs,
     duration_hours: durationHours,
     source_url: completed.sourceUrl || null,
-    synced_to_project: syncedToProject,
+    synced_to_project: projectIds.length > 0,
     project_titles: projectTitles,
     project_ids: projectIds,
     takt_version: TAKT_VERSION,
     client_ts: new Date().toISOString(),
+    // Only historical manual entries may be attributed by an admin. Live
+    // timers deliberately omit this so the server attributes them to caller.
+    ...(completed.memberLogin ? { member_login: completed.memberLogin } : {}),
   };
 }
 
@@ -175,7 +213,7 @@ async function recomputeProjectField(repo, issueNumber) {
 async function pushCompletedToBackend(completed, linkedProjects = []) {
   const payload = toBackendSession(completed, linkedProjects);
   try {
-    await pushSession(payload);
+    const response = await pushSession(payload);
 
     // Upsert project lookup rows so the backend always has current titles.
     // A rename is a single-row update in the projects table; every session
@@ -195,15 +233,22 @@ async function pushCompletedToBackend(completed, linkedProjects = []) {
       }
     }
 
-    // Backend confirmed — update the cache entry's sync metadata.
-    await cache.upsertSession({
-      sessionId: payload.session_id,
-      syncedToProject: payload.synced_to_project,
-      projectTitles: payload.project_titles,
-      projectIds: payload.project_ids,
-      syncStatus: 'synced',
-      syncedAt: Date.now(),
-    });
+    // Backend confirmed — update the caller's cache entry metadata. An admin
+    // target-member create is backend-only and must never enter this cache.
+    if (!completed.memberLogin) {
+      if (response?.session_id) {
+        await cache.upsertSession(cache.fromBackendSession(response));
+      } else {
+        await cache.upsertSession({
+          sessionId: payload.session_id,
+          syncedToProject: payload.synced_to_project,
+          projectTitles: payload.project_titles,
+          projectIds: payload.project_ids,
+          syncStatus: 'synced',
+          syncedAt: Date.now(),
+        });
+      }
+    }
     return { ok: true, session_id: payload.session_id };
   } catch (err) {
     // Enqueue for retry. Permanent errors will still be dropped by the
@@ -311,21 +356,25 @@ async function handleMessage({ action, payload }) {
       if (activeSession) {
         const ref = activeSession.issueNumber > 0
           ? `${activeSession.repo}#${activeSession.issueNumber}`
-          : activeSession.repo;
+          : (activeSession.description || activeSession.client || 'another task');
         return { error: `Timer already active on ${ref}` };
       }
-      // issueNumber=0 is the manual-entry sentinel (meetings, PM work
-      // started from the Add-entry modal "Start tracking" button). The
-      // STOP path skips the issue-comment + project sync for these.
       const issueNum = Number.isFinite(payload.issueNumber) && payload.issueNumber > 0
         ? payload.issueNumber : 0;
+      const source = payload.source || (payload.sourceUrl && issueNum > 0 ? 'github' : 'manual');
+      const entryType = source === 'github' ? 'delivery' : (payload.entryType || 'ops');
       const session = {
-        // session_id is generated at START so it's stable across pause/resume
-        // and matches the BigQuery `session_id` we'll push on STOP.
         sessionId: crypto.randomUUID(),
-        repo: payload.repo,
-        issueNumber: issueNum,
-        issueTitle: payload.issueTitle,
+        source,
+        entryType,
+        clientId: payload.clientId ?? null,
+        client: payload.client || null,
+        repo: entryType === 'ops' ? null : (payload.repo || null),
+        reportingProjectId: payload.reportingProjectId || null,
+        project: payload.project || null,
+        issueNumber: entryType === 'ops' ? 0 : issueNum,
+        issueTitle: entryType === 'ops' ? null : (payload.issueTitle || null),
+        description: payload.description || payload.issueTitle || null,
         sourceUrl: payload.sourceUrl || null,
         startedAt: Date.now(),
         accumulatedMs: 0,
@@ -393,11 +442,17 @@ async function handleMessage({ action, payload }) {
         // from completedAt - durationMs.
         ?? (completedAt - durationMs);
       const completed = {
-        // Backend-aligned identifiers
         sessionId: activeSession.sessionId || crypto.randomUUID(),
+        source: activeSession.source || 'manual',
+        entryType: activeSession.entryType || 'ops',
+        clientId: activeSession.clientId ?? null,
+        client: activeSession.client || null,
         repo: activeSession.repo,
+        reportingProjectId: activeSession.reportingProjectId || null,
+        project: activeSession.project || null,
         issueNumber: activeSession.issueNumber,
         issueTitle: activeSession.issueTitle,
+        description: activeSession.description || activeSession.issueTitle || null,
         sourceUrl: activeSession.sourceUrl || null,
         startedAtMs,
         durationMs,
@@ -414,9 +469,17 @@ async function handleMessage({ action, payload }) {
       const isGhStop = /^[^/\s]+\/[^/\s]+$/.test(completed.repo || '');
       await cache.upsertSession({
         sessionId: completed.sessionId,
+        source: completed.source,
+        entryType: completed.entryType,
+        clientId: completed.clientId,
+        client: completed.client,
         repo: completed.repo,
+        reportingProjectId: completed.reportingProjectId,
+        project: completed.project,
         issueNumber: completed.issueNumber,
         issueTitle: completed.issueTitle ?? null,
+        description: completed.description,
+        githubMetadata: {},
         issueUrl: (isGhStop && completed.issueNumber > 0)
           ? `https://github.com/${completed.repo}/issues/${completed.issueNumber}`
           : null,
@@ -439,7 +502,7 @@ async function handleMessage({ action, payload }) {
       let linkedProjects = [];
       try {
         const { settings = {} } = await chrome.storage.local.get('settings');
-        if (settings.pat) {
+        if (settings.pat && completed.entryType === 'delivery' && completed.issueNumber > 0) {
           linkedProjects = await getLinkedProjects(
             settings.pat, completed.repo, completed.issueNumber, settings
           );
@@ -616,6 +679,19 @@ async function handleMessage({ action, payload }) {
       }
     }
 
+    case 'FETCH_PROJECT_REPOS': {
+      const { settings = {} } = await chrome.storage.local.get('settings');
+      if (!settings.pat || !payload?.projectId) {
+        return { ok: false, error: { code: 'invalid_input', message: 'PAT and project required.' } };
+      }
+      try {
+        const issues = await fetchProjectIssues(settings.pat, payload.projectId);
+        return { ok: true, repos: [...new Set(issues.map((issue) => issue.repo))].sort() };
+      } catch (err) {
+        return { ok: false, error: { code: 'fetch_failed', message: err.message } };
+      }
+    }
+
     case 'BACKEND_PING': {
       // Used by options/popup to show a green/red status pip.
       const result = await pingBackend();
@@ -661,10 +737,13 @@ async function handleMessage({ action, payload }) {
       // older than the cache's 30-day retention — reconciling would write
       // those rows in then immediately prune them on save.
       try {
-        const { skipReconcile, ...apiParams } = payload || {};
+        const { skipReconcile, backendOnly = false, ...apiParams } = payload || {};
         const sessions = await listBackendSessions(apiParams);
         const records = sessions.map(cache.fromBackendSession);
-        if (!skipReconcile) {
+        // An admin viewing another member is a backend-only operation. Never
+        // merge those records into the caller's local-first cache, otherwise
+        // popup totals and later "My Time" reads would leak across users.
+        if (!skipReconcile && !backendOnly) {
           await cache.reconcileWindow({
             from: apiParams.from,
             to: apiParams.to,
@@ -680,7 +759,7 @@ async function handleMessage({ action, payload }) {
     case 'UPDATE_BACKEND_SESSION': {
       // Optimistic local update first, then push. On failure, restore the
       // cached pre-edit version so the UI doesn't show a stale value.
-      const before = await cache.getSession(payload.sessionId);
+      const before = payload.backendOnly ? null : await cache.getSession(payload.sessionId);
       if (before && payload.patch?.duration_ms !== undefined) {
         const newMs = payload.patch.duration_ms;
         await cache.upsertSession({
@@ -693,7 +772,7 @@ async function handleMessage({ action, payload }) {
       }
       try {
         const updated = await updateBackendSession(payload.sessionId, payload.patch);
-        await cache.upsertSession(cache.fromBackendSession(updated));
+        if (!payload.backendOnly) await cache.upsertSession(cache.fromBackendSession(updated));
         // Push the new total back to any linked GitHub Project. Fire-and-
         // forget — the UI doesn't block on this, errors get logged.
         recomputeProjectField(updated.repo, updated.issue_number)
@@ -717,6 +796,55 @@ async function handleMessage({ action, payload }) {
         return { ok: true };
       } catch (err) {
         if (before) await cache.upsertSession(before);
+        return { ok: false, error: { code: err.code, message: err.message, status: err.status } };
+      }
+    }
+
+    case 'GET_BACKEND_ME': {
+      try {
+        const me = await getBackendMe();
+        return { ok: true, me };
+      } catch (err) {
+        return { ok: false, error: { code: err.code, message: err.message, status: err.status } };
+      }
+    }
+
+    case 'LIST_CLIENTS': {
+      try {
+        return { ok: true, clients: await listBackendClients() };
+      } catch (err) {
+        return { ok: false, error: { code: err.code, message: err.message, status: err.status } };
+      }
+    }
+
+    case 'ADMIN_CREATE_CLIENT': {
+      try {
+        return { ok: true, client: await createBackendClient(payload) };
+      } catch (err) {
+        return { ok: false, error: { code: err.code, message: err.message, status: err.status } };
+      }
+    }
+
+    case 'ADMIN_MAP_CLIENT_PROJECT': {
+      try {
+        return {
+          ok: true,
+          client: await mapBackendClientProject(payload.clientId, payload.project),
+        };
+      } catch (err) {
+        return { ok: false, error: { code: err.code, message: err.message, status: err.status } };
+      }
+    }
+
+    case 'ADMIN_MAP_PROJECT_REPO': {
+      try {
+        return {
+          ok: true,
+          client: await mapBackendProjectRepository(
+            payload.clientId, payload.projectId, payload.repo
+          ),
+        };
+      } catch (err) {
         return { ok: false, error: { code: err.code, message: err.message, status: err.status } };
       }
     }
@@ -768,39 +896,65 @@ async function handleMessage({ action, payload }) {
       // reconstructing past work, not closing a fresh timer). We DO
       // recompute the GitHub Project field — once the row is in BigQuery
       // it counts toward the issue's tracked total just like a STOP row.
-      const { repo, issueNumber, issueTitle, completedAt, durationMs } =
-        payload || {};
-      if (!repo || !completedAt || !durationMs || durationMs <= 0) {
+      const {
+        source = 'manual', entryType, clientId, client, repo,
+        reportingProjectId, project, issueNumber, issueTitle, description,
+        memberLogin, completedAt, durationMs,
+      } = payload || {};
+      const issueNum = Number.isFinite(issueNumber) && issueNumber > 0 ? issueNumber : 0;
+      const delivery = entryType === 'delivery';
+      const normalizedClientId = Number(clientId);
+      const missing = [];
+      if (!Number.isFinite(completedAt)) missing.push('date');
+      if (!Number.isFinite(durationMs) || durationMs <= 0) missing.push('duration');
+      if (!Number.isInteger(normalizedClientId) || normalizedClientId <= 0) missing.push('client');
+      if (!String(description || '').trim()) missing.push('description');
+      if (delivery && !String(reportingProjectId || '').trim()) missing.push('project ID');
+      if (delivery && !String(project || '').trim()) missing.push('project name');
+      if (!['delivery', 'ops'].includes(entryType)) missing.push('entry type');
+      if (missing.length) {
         return {
           ok: false,
-          error: { code: 'invalid_input', message: 'Missing or invalid fields.' },
+          error: {
+            code: 'invalid_input',
+            message: `Missing or invalid: ${missing.join(', ')}.`,
+          },
         };
       }
-      // issueNumber=0 is the "no linked issue" sentinel (meetings, PM
-      // work, email). Anything else must be a positive int.
-      const issueNum = Number.isFinite(issueNumber) && issueNumber > 0
-        ? issueNumber : 0;
 
       const sessionId = crypto.randomUUID();
       const startedAtMs = completedAt - durationMs;
-      const durationHoursForCache =
-        Math.round((durationMs / 3_600_000) * 4) / 4;
-      const isGhRepo = /^[^/\s]+\/[^/\s]+$/.test(repo);
+      const durationHoursForCache = Math.round((durationMs / 3_600_000) * 4) / 4;
+      const normalizedRepo = delivery ? (String(repo || '').trim() || null) : null;
+      const normalizedIssue = delivery ? issueNum : 0;
+      const linkedProjects = delivery
+        ? [{ projectId: reportingProjectId, title: project }]
+        : [];
 
-      await cache.upsertSession({
+      if (!memberLogin) await cache.upsertSession({
         sessionId,
-        repo,
-        issueNumber: issueNum,
-        issueTitle: issueTitle ?? null,
-        issueUrl: isGhRepo && issueNum > 0
-          ? `https://github.com/${repo}/issues/${issueNum}` : null,
+        source,
+        entryType,
+        clientId: normalizedClientId,
+        client,
+        repo: normalizedRepo,
+        reportingProjectId: delivery ? reportingProjectId : null,
+        project: delivery ? project : null,
+        issueNumber: normalizedIssue,
+        issueTitle: normalizedIssue > 0 ? issueTitle : null,
+        description,
+        githubMetadata: {},
+        issueUrl: normalizedRepo && normalizedIssue > 0
+          ? `https://github.com/${normalizedRepo}/issues/${normalizedIssue}` : null,
         sourceUrl: null,
         startedAt: startedAtMs,
         completedAt,
         durationMs,
         durationHours: durationHoursForCache,
-        syncedToProject: false,
-        projectTitles: [],
+        durationHoursExact: durationMs / 3_600_000,
+        syncedToProject: delivery,
+        projectTitles: linkedProjects.map((item) => item.title),
+        projectIds: linkedProjects.map((item) => item.projectId),
         taktVersion: TAKT_VERSION,
         syncStatus: 'pending',
         syncedAt: null,
@@ -808,36 +962,25 @@ async function handleMessage({ action, payload }) {
 
       const completed = {
         sessionId,
-        repo,
-        issueNumber: issueNum,
-        issueTitle: issueTitle ?? null,
+        source,
+        entryType,
+        clientId: normalizedClientId,
+        client,
+        repo: normalizedRepo,
+        reportingProjectId: delivery ? reportingProjectId : null,
+        project: delivery ? project : null,
+        issueNumber: normalizedIssue,
+        issueTitle: normalizedIssue > 0 ? issueTitle : null,
+        description,
+        memberLogin: memberLogin || null,
         sourceUrl: null,
         startedAtMs,
         durationMs,
         completedAt,
       };
-
-      // Resolve linked projects before the push so the row carries
-      // project_ids (see the STOP path for why this must precede the push).
-      let linkedProjects = [];
-      try {
-        const { settings = {} } = await chrome.storage.local.get('settings');
-        if (settings.pat) {
-          linkedProjects = await getLinkedProjects(settings.pat, repo, issueNum, settings);
-        }
-      } catch (err) {
-        console.warn('[Takt] linked-projects lookup (add) failed:', err.message);
-      }
-
-      // Push to backend. On failure the cache entry stays 'pending' and
-      // the sync queue will retry — so from the user's POV the entry is
-      // saved either way, and the row's sync badge communicates state.
       const backendResult = await pushCompletedToBackend(completed, linkedProjects);
-
-      // Recompute + write the GitHub Project field (only meaningful when
-      // there's a linked issue and a project). No-op otherwise.
-      if (backendResult?.ok) {
-        recomputeProjectField(repo, issueNum)
+      if (backendResult?.ok && normalizedIssue > 0) {
+        recomputeProjectField(normalizedRepo, normalizedIssue)
           .catch((err) => console.warn('[Takt] project recompute (add) failed:', err));
       }
       return { ok: true, sessionId, backendResult };

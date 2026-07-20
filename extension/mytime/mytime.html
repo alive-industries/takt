@@ -67,6 +67,8 @@
       margin-bottom: 16px;
       flex-wrap: wrap;
     }
+    #admin-user-filter-wrap { display: contents; }
+    #admin-user-filter-wrap[hidden] { display: none; }
     .filters label {
       font-size: 12px;
       font-weight: 600;
@@ -402,8 +404,12 @@
     </div>
 
     <div class="filters">
-      <label>Repo</label>
-      <select id="filter-repo"><option value="">All repos</option></select>
+      <span id="admin-user-filter-wrap" hidden>
+        <label for="filter-user">User</label>
+        <select id="filter-user"><option value="">My time</option></select>
+      </span>
+      <label>Context</label>
+      <select id="filter-repo"><option value="">All contexts</option></select>
       <label>From</label>
       <input type="date" id="filter-from">
       <label>To</label>
@@ -426,7 +432,7 @@
         <thead>
           <tr>
             <th>Date</th>
-            <th>Repo</th>
+            <th>Project</th>
             <th>Issue</th>
             <th>Duration</th>
             <th>Hours</th>
@@ -447,21 +453,32 @@
       </div>
       <div class="modal-body">
         <div class="form-row">
-          <label for="add-org">Organization</label>
-          <select id="add-org">
-            <option value="">Loading orgs…</option>
+          <label for="add-mode">Entry type</label>
+          <select id="add-mode">
+            <option value="delivery">Delivery</option>
+            <option value="ops">Ops</option>
           </select>
         </div>
-        <div class="form-row">
-          <label for="add-repo">Repo</label>
-          <select id="add-repo" disabled>
-            <option value="">Pick an organization first</option>
-          </select>
+        <div class="form-row" id="add-member-row" hidden>
+          <label for="add-member">Record historical entry for</label>
+          <select id="add-member"></select>
+          <div class="field-hint">Live timers are always attributed to you.</div>
         </div>
         <div class="form-row">
-          <label for="add-project">Project <span class="muted">(optional)</span></label>
+          <label for="add-client">Client</label>
+          <select id="add-client"><option value="">Loading clients…</option></select>
+        </div>
+        <div id="add-github-fields">
+        <div class="form-row">
+          <label for="add-project">Project <span class="muted">(required)</span></label>
           <select id="add-project" disabled>
-            <option value="">Pick a repo first</option>
+            <option value="">Pick a client first</option>
+          </select>
+        </div>
+        <div class="form-row">
+          <label for="add-repo">Repository <span class="muted">(optional — for code-related work)</span></label>
+          <select id="add-repo" disabled>
+            <option value="">Pick a project first</option>
           </select>
         </div>
         <div class="form-row">
@@ -469,6 +486,7 @@
           <select id="add-issue-select" disabled>
             <option value="">Pick a project first</option>
           </select>
+        </div>
         </div>
         <div class="form-row">
           <label for="add-title">Title <span class="muted" id="add-title-hint">(autofilled from the issue)</span></label>

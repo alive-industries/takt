@@ -1,0 +1,443 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Data sources — time tracking · Alive Industries</title>
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --font: Arial, Helvetica, sans-serif;
+  --mono: 'Courier New', Courier, monospace;
+  --bg:        #ffffff;
+  --bg1:       #f7f7f7;
+  --bg2:       #efefef;
+  --text:      #111111;
+  --text2:     #555555;
+  --text3:     #999999;
+  --border:    #e0e0e0;
+  --border2:   #c8c8c8;
+  --blue-bg:   #e8f0fe;
+  --blue-bd:   #4a80f0;
+  --blue-tx:   #1a4fc4;
+  --green-bg:  #e8f5e9;
+  --green-bd:  #43a047;
+  --green-tx:  #1b5e20;
+  --amber-bg:  #fff8e1;
+  --amber-bd:  #f9a825;
+  --amber-tx:  #6d4c00;
+  --label-bg:  #eef3fe;
+  --route-bg:  #fffbf0;
+}
+
+body {
+  font-family: var(--font);
+  font-size: 13px;
+  color: var(--text);
+  background: var(--bg);
+  max-width: 860px;
+  margin: 0 auto;
+  padding: 48px 40px 72px;
+  line-height: 1.6;
+}
+
+.meta {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text3);
+  margin-bottom: 6px;
+}
+h1 {
+  font-size: 20px;
+  font-weight: bold;
+  margin-bottom: 10px;
+}
+.intro {
+  font-size: 13px;
+  color: var(--text2);
+  max-width: 640px;
+  margin-bottom: 24px;
+  line-height: 1.7;
+}
+
+/* Legend */
+.legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  align-items: center;
+  margin-bottom: 20px;
+}
+.legend-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text3);
+}
+
+/* Badges */
+.bd {
+  display: inline-block;
+  font-size: 10px;
+  font-weight: bold;
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-family: var(--mono);
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  border-width: 1px;
+  border-style: solid;
+}
+.sys { background: var(--bg1);      border-color: var(--border2);  color: var(--text2);    }
+.gh  { background: var(--blue-bg);  border-color: var(--blue-bd);  color: var(--blue-tx);  }
+.sel { background: var(--green-bg); border-color: var(--green-bd); color: var(--green-tx); }
+.typ { background: var(--amber-bg); border-color: var(--amber-bd); color: var(--amber-tx); }
+
+.src {
+  font-size: 12px;
+  color: var(--text2);
+  margin-top: 5px;
+  line-height: 1.5;
+}
+.src-cond {
+  font-size: 11px;
+  color: var(--text3);
+  margin-top: 3px;
+  line-height: 1.5;
+  font-style: italic;
+}
+.src + .bd { margin-top: 8px; display: block; }
+.nul {
+  font-size: 12px;
+  color: var(--text3);
+  font-style: italic;
+  margin-top: 2px;
+}
+.mono { font-family: var(--mono); }
+
+/* Table container */
+.tbl-wrap {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  overflow: hidden;
+  margin-bottom: 6px;
+}
+
+/* Main source table */
+.tbl-main {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+}
+
+.tbl-main th {
+  text-align: left;
+  padding: 10px 14px;
+  font-size: 11px;
+  font-weight: normal;
+  font-family: var(--mono);
+  color: var(--text3);
+  background: var(--bg1);
+  border-bottom: 1px solid var(--border);
+}
+.tbl-main th.route {
+  font-size: 11px;
+  color: var(--text2);
+  font-weight: bold;
+}
+.tbl-main th .route-sub {
+  display: block;
+  font-weight: normal;
+  color: var(--text3);
+  font-size: 10px;
+  margin-top: 2px;
+}
+
+.tbl-main td {
+  padding: 11px 14px;
+  vertical-align: top;
+  border-bottom: 1px solid var(--border);
+  font-size: 13px;
+}
+.tbl-main tbody tr:last-child td { border-bottom: none; }
+
+/* Subheader row */
+.subhdr td {
+  padding: 5px 14px;
+  font-size: 11px;
+  color: var(--text3);
+  font-style: italic;
+  background: var(--bg2);
+  border-bottom: 1px solid var(--border);
+}
+.subhdr td:first-child {
+  font-style: normal;
+  font-weight: bold;
+  font-family: var(--mono);
+  color: var(--text3);
+}
+
+/* Decision row */
+.decision td {
+  padding: 10px 14px;
+  background: var(--route-bg);
+  border-bottom: 1px solid #f0e5c0;
+  font-size: 12px;
+  vertical-align: top;
+}
+.decision .d-label {
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: bold;
+  color: var(--text3);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.decision .d-rule {
+  font-size: 12px;
+  color: var(--text2);
+  margin-top: 3px;
+  line-height: 1.5;
+}
+.decision .d-rule strong { color: var(--text); }
+
+/* Label row */
+.lrow td { background: var(--label-bg); }
+
+/* Field name cells */
+.field      { font-family: var(--mono); font-size: 12px; color: var(--text); width: 110px; }
+.field-bold { font-family: var(--mono); font-size: 12px; color: var(--text); font-weight: bold; }
+
+/* Footnote */
+.footnote {
+  font-size: 11px;
+  color: var(--text3);
+  margin: 8px 0 28px;
+}
+
+/* Callout box */
+.callout {
+  padding: 16px 20px;
+  background: var(--bg1);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  margin-bottom: 24px;
+}
+.callout-title {
+  font-size: 13px;
+  font-weight: bold;
+  margin-bottom: 8px;
+}
+.callout-body {
+  font-size: 13px;
+  color: var(--text2);
+  line-height: 1.6;
+  margin-bottom: 14px;
+}
+pre.sql {
+  font-family: var(--mono);
+  font-size: 12px;
+  background: var(--bg);
+  padding: 10px 14px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  color: var(--text);
+  line-height: 1.8;
+  overflow-x: auto;
+}
+
+/* Section label */
+.section-label {
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: bold;
+  color: var(--text3);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  margin-bottom: 8px;
+}
+
+/* Output table */
+.tbl-out { width: 100%; border-collapse: collapse; }
+.tbl-out th {
+  text-align: left;
+  padding: 8px 16px;
+  font-size: 11px;
+  font-weight: normal;
+  font-family: var(--mono);
+  color: var(--text3);
+  background: var(--bg1);
+  border-bottom: 1px solid var(--border);
+}
+.tbl-out td {
+  padding: 8px 16px;
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--text2);
+  border-bottom: 1px solid var(--border);
+}
+.tbl-out tbody tr:last-child td { border-bottom: none; }
+.tbl-out .right  { text-align: right; }
+.tbl-out .val    { color: var(--text); font-weight: bold; }
+.tbl-out .ops-lbl { color: var(--text3); font-style: italic; }
+</style>
+</head>
+<body>
+
+<p class="meta">Alive Industries · internal · July 2026</p>
+<h1>Data sources — time tracking</h1>
+<p class="intro">There are three entry routes. Route 1 is triggered from GitHub — all fields captured automatically. Routes 2 and 3 are manual entries in the tracking tool, distinguished by whether the user selects a project: project selected = delivery (route 2), no project = ops (route 3).</p>
+
+<div class="legend">
+  <div class="legend-item"><span class="bd sys">System</span> auto-set by tool</div>
+  <div class="legend-item"><span class="bd gh">GitHub</span> from GitHub context</div>
+  <div class="legend-item"><span class="bd sel">User selects</span> dropdown in UI</div>
+  <div class="legend-item"><span class="bd typ">User types</span> free text input</div>
+</div>
+
+<div class="tbl-wrap">
+  <table class="tbl-main">
+    <colgroup>
+      <col style="width:110px">
+      <col>
+      <col>
+      <col>
+    </colgroup>
+    <thead>
+      <tr>
+        <th>field</th>
+        <th class="route">Route 1 — GitHub timer
+          <span class="route-sub">start/stop on issue in GitHub</span>
+        </th>
+        <th class="route">Route 2 — Manual delivery
+          <span class="route-sub">manual entry, project selected</span>
+        </th>
+        <th class="route">Route 3 — Manual ops
+          <span class="route-sub">manual entry, no project selected</span>
+        </th>
+      </tr>
+    </thead>
+    <tbody>
+      <!-- Decision row -->
+      <tr class="decision">
+        <td><span class="d-label">routing</span></td>
+        <td><p class="d-rule">Always delivery — triggered externally from GitHub</p></td>
+        <td><p class="d-rule"><strong>Project selected</strong> → system sets type = delivery</p></td>
+        <td><p class="d-rule"><strong>No project selected</strong> → system sets type = ops</p></td>
+      </tr>
+      <!-- type -->
+      <tr>
+        <td class="field">type</td>
+        <td><span class="bd sys">System</span><p class="src">hardcoded "delivery"</p></td>
+        <td><span class="bd sys">System</span><p class="src">"delivery" — project was selected</p></td>
+        <td><span class="bd sys">System</span><p class="src">"ops" — no project selected</p></td>
+      </tr>
+      <!-- user -->
+      <tr>
+        <td class="field">user</td>
+        <td><span class="bd gh">GitHub</span><p class="src">authenticated GitHub user</p></td>
+        <td><span class="bd sys">System</span><p class="src">logged-in user in the tool</p></td>
+        <td><span class="bd sys">System</span><p class="src">logged-in user in the tool</p></td>
+      </tr>
+      <!-- client -->
+      <tr>
+        <td class="field">client</td>
+        <td><span class="bd sys">System</span><p class="src">derived from repo name †</p></td>
+        <td><span class="bd sel">User selects</span><p class="src">dropdown derived from GitHub repo names †</p></td>
+        <td><span class="bd sel">User selects</span><p class="src">dropdown derived from GitHub repo names †</p></td>
+      </tr>
+      <!-- repo -->
+      <tr>
+        <td class="field">repo</td>
+        <td><span class="bd gh">GitHub</span><p class="src">current issue context</p></td>
+        <td><span class="bd sel">User selects</span><p class="src">GitHub dropdown, filtered by client</p></td>
+        <td><p class="nul">null</p></td>
+      </tr>
+      <!-- project -->
+      <tr>
+        <td class="field">project</td>
+        <td><span class="bd gh">GitHub</span><p class="src">current issue context</p></td>
+        <td><span class="bd sel">User selects</span><p class="src">GitHub dropdown, filtered by repo — <strong>required for delivery</strong></p></td>
+        <td><p class="nul">null — not selected, triggers ops</p></td>
+      </tr>
+      <!-- issue -->
+      <tr>
+        <td class="field">issue</td>
+        <td><span class="bd gh">GitHub</span><p class="src">current issue context</p></td>
+        <td><span class="bd sel">User selects</span><p class="src">GitHub dropdown, filtered by project — optional</p></td>
+        <td><p class="nul">null</p></td>
+      </tr>
+      <!-- description -->
+      <tr>
+        <td class="field">description</td>
+        <td><span class="bd gh">GitHub</span><p class="src">issue title — auto-pulled</p></td>
+        <td>
+          <span class="bd gh">GitHub</span>
+          <p class="src">issue title — auto-pulled <em>if issue selected</em></p>
+          <span class="bd typ" style="margin-top:8px">User types</span>
+          <p class="src">free text <em>if no issue selected</em></p>
+        </td>
+        <td><span class="bd typ">User types</span><p class="src">free text: what was worked on</p></td>
+      </tr>
+      <!-- hours -->
+      <tr>
+        <td class="field">hours</td>
+        <td><span class="bd sys">System</span><p class="src">calculated from start/stop timestamps</p></td>
+        <td><span class="bd typ">User types</span><p class="src">manual number entry</p></td>
+        <td><span class="bd typ">User types</span><p class="src">manual number entry</p></td>
+      </tr>
+      <!-- label -->
+      <tr class="lrow">
+        <td class="field-bold">label ★</td>
+        <td><span class="bd sys">System</span><p class="src">client + project — e.g. <span class="mono">beagle — Q3 stabilisation</span></p></td>
+        <td><span class="bd sys">System</span><p class="src">client + project — e.g. <span class="mono">beagle — Q3 stabilisation</span></p></td>
+        <td><span class="bd sys">System</span><p class="src">client + "ops" — e.g. <span class="mono">beagle — ops</span></p></td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+<p class="footnote">† client uses a consistent repo naming convention throughout — auto-derived in route 1 (e.g. beagle-platform → beagle), and the same convention populates the dropdown in routes 2 and 3. GitHub is the single source of truth in all cases.</p>
+
+<div class="callout">
+  <p class="callout-title">★ label is the key reporting dimension</p>
+  <p class="callout-body">Label is a composite of client + project (routes 1 and 2) or client + "ops" (route 3), computed at write time. It carries full context in a single column — the dashboard needs no joins, no filters, one GROUP BY.</p>
+  <pre class="sql">SELECT label, SUM(hours) AS total_hours
+FROM time_tracking
+GROUP BY label</pre>
+</div>
+
+<p class="section-label">Example output</p>
+<div class="tbl-wrap">
+  <table class="tbl-out">
+    <thead>
+      <tr>
+        <th>label</th>
+        <th class="right">total_hours</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>beagle — Q3 stabilisation</td>
+        <td class="right val">24.0</td>
+      </tr>
+      <tr>
+        <td class="ops-lbl">beagle — ops</td>
+        <td class="right val">6.5</td>
+      </tr>
+      <tr>
+        <td>north-sails — V24 annotation</td>
+        <td class="right val">18.0</td>
+      </tr>
+      <tr>
+        <td class="ops-lbl">north-sails — ops</td>
+        <td class="right val">3.0</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+</body>
+</html>

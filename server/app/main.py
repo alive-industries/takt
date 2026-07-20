@@ -11,7 +11,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app.config import get_settings
-from app.routes import admin, me, projects, sessions
+from app.db import reset_db
+from app.routes import admin, clients, me, projects, sessions
 from app.services.github import get_github_client, reset_github_client
 
 
@@ -27,6 +28,7 @@ async def lifespan(app: FastAPI):
     yield
     await get_github_client().aclose()
     reset_github_client()
+    reset_db()
 
 
 def create_app() -> FastAPI:
@@ -37,8 +39,8 @@ def create_app() -> FastAPI:
         title="Takt API",
         version="0.1.0",
         description=(
-            "Backend for the Takt time tracker. "
-            "Verifies GitHub PATs and writes to BigQuery."
+            "Backend for the Takt time tracker. Verifies GitHub PATs and persists "
+            "sessions transactionally in PostgreSQL."
         ),
         lifespan=lifespan,
     )
@@ -68,7 +70,11 @@ def create_app() -> FastAPI:
         # Allow CORS preflight, health checks, and OpenAPI introspection
         # through unauthenticated.
         if request.method == "OPTIONS" or path in (
-            "/health", "/openapi.json", "/docs", "/redoc", "/docs/oauth2-redirect"
+            "/health",
+            "/openapi.json",
+            "/docs",
+            "/redoc",
+            "/docs/oauth2-redirect",
         ):
             return await call_next(request)
 
@@ -91,6 +97,7 @@ def create_app() -> FastAPI:
         return await call_next(request)
 
     app.include_router(me.router)
+    app.include_router(clients.router)
     app.include_router(sessions.router)
     app.include_router(projects.router)
     app.include_router(admin.router)

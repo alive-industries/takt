@@ -1,0 +1,105 @@
+:root {
+  color-scheme: light;
+  font-family: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  color: #172033;
+  background: #f4f7fb;
+}
+* { box-sizing: border-box; }
+body { margin: 0; min-width: 0; min-height: 100vh; overflow: hidden; }
+button { font: inherit; }
+.app-shell { display: grid; grid-template-columns: 232px minmax(0, 1fr); width: 100vw; min-height: 100vh; }
+.sidebar {
+  position: sticky; top: 0; height: 100vh; padding: 24px 16px;
+  display: flex; flex-direction: column; color: #dce6f8;
+  background: linear-gradient(180deg, #111a2e 0%, #18243e 100%);
+  box-shadow: 12px 0 32px rgba(23, 32, 51, .08);
+}
+.brand { display: flex; align-items: center; gap: 12px; padding: 0 8px 28px; }
+.brand-mark {
+  width: 38px; height: 38px; display: grid; place-items: center; border-radius: 11px;
+  color: white; font-size: 18px; font-weight: 800;
+  background: linear-gradient(135deg, #5b8cff, #7656e8);
+  box-shadow: 0 8px 20px rgba(91, 140, 255, .3);
+}
+.brand strong, .brand span, .sidebar-footer strong, .sidebar-footer span { display: block; }
+.brand strong { color: white; font-size: 16px; }
+.brand span, .sidebar-footer span { margin-top: 2px; color: #8fa1c2; font-size: 11px; }
+nav { display: grid; gap: 7px; }
+.nav-item {
+  border: 0; border-radius: 10px; padding: 11px 12px; display: flex; gap: 11px;
+  align-items: center; color: #aebddb; background: transparent; cursor: pointer; text-align: left;
+}
+.nav-item:hover { color: white; background: rgba(255,255,255,.07); }
+.nav-item.is-active { color: white; background: rgba(91, 140, 255, .2); }
+.nav-icon { width: 20px; text-align: center; font-size: 17px; }
+.sidebar-footer { margin-top: auto; display: flex; gap: 9px; align-items: center; padding: 14px 8px 0; border-top: 1px solid rgba(255,255,255,.09); }
+.sidebar-footer strong { color: #e9effa; max-width: 150px; overflow: hidden; text-overflow: ellipsis; }
+.status-dot { width: 9px; height: 9px; border-radius: 50%; background: #f2b84b; box-shadow: 0 0 0 4px rgba(242,184,75,.12); }
+main { min-width: 0; }
+.topbar { height: 88px; display: flex; align-items: center; justify-content: space-between; padding: 18px 34px; background: rgba(255,255,255,.88); border-bottom: 1px solid #e3e9f2; backdrop-filter: blur(12px); }
+.eyebrow { margin: 0 0 3px; color: #8b97aa; font-size: 10px; font-weight: 800; letter-spacing: .12em; text-transform: uppercase; }
+h1 { margin: 0; font-size: 24px; letter-spacing: -.02em; }
+.sync-pill { padding: 7px 11px; border: 1px solid #dce4ef; border-radius: 999px; color: #68758a; background: white; font-size: 12px; }
+.workspace { width: 100%; min-width: 0; height: calc(100vh - 88px); padding: 0; overflow: hidden; }
+iframe { width: 100%; height: 100%; display: block; border: 0; background: #f4f7fb; }
+iframe[hidden] { display: none; }
+.clients-workspace { width: 100%; min-width: 0; height: 100%; display: grid; grid-template-columns: minmax(240px, 300px) minmax(0, 1fr); overflow: hidden; }
+.clients-workspace[hidden] { display: none; }
+.clients-panel { padding: 24px 18px; overflow-y: auto; background: #fff; border-right: 1px solid #e3e9f2; }
+.panel-heading { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; }
+.panel-heading h2, .client-detail h2, .project-card h3 { margin: 0; }
+.icon-button { width: 34px; height: 34px; border: 1px solid #d8e0ec; border-radius: 9px; background: #f8faff; color: #315fc4; font-size: 21px; cursor: pointer; }
+.new-client-form { padding: 13px; margin-bottom: 14px; border: 1px solid #dfe6f1; border-radius: 10px; background: #f8faff; }
+.new-client-form label, .field label { display: block; margin-bottom: 5px; color: #59677d; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; }
+.inline-form { display: flex; gap: 7px; }
+.inline-form input, .field select { min-width: 0; flex: 1; padding: 8px 10px; border: 1px solid #d6dfec; border-radius: 7px; background: #fff; font: inherit; }
+.inline-form button, .primary-button { padding: 8px 12px; border: 0; border-radius: 7px; color: #fff; background: #315fc4; font-weight: 700; cursor: pointer; }
+.client-list { display: grid; gap: 7px; }
+.client-list-item { width: 100%; padding: 12px; display: flex; justify-content: space-between; gap: 8px; border: 1px solid transparent; border-radius: 10px; background: transparent; color: #27344a; text-align: left; cursor: pointer; }
+.client-list-item:hover { background: #f6f8fc; }
+.client-list-item.is-active { border-color: #cfdcff; background: #eef3ff; }
+.client-list-item strong, .client-list-item span { display: block; }
+.client-list-item span { margin-top: 3px; color: #8591a4; font-size: 11px; }
+.count-badge { align-self: center; padding: 3px 7px; border-radius: 999px; color: #315fc4; background: #dfe8ff; font-size: 11px; font-weight: 800; }
+.client-detail { min-width: 0; padding: 28px 32px 60px; overflow-x: hidden; overflow-y: auto; }
+.empty-detail { max-width: 360px; margin: 90px auto; color: #7c899d; text-align: center; }
+.empty-detail h2 { color: #344158; }
+.empty-detail p { line-height: 1.55; }
+.empty-icon { width: 54px; height: 54px; display: grid; place-items: center; margin: 0 auto 14px; border-radius: 16px; color: #315fc4; background: #e9efff; font-size: 25px; }
+.detail-heading { display: grid; grid-template-columns: minmax(220px, .8fr) minmax(300px, 1.2fr); gap: 24px; align-items: start; margin-bottom: 22px; }
+.detail-heading > * { min-width: 0; }
+.detail-heading p { margin: 5px 0 0; color: #78869b; }
+.project-picker { min-width: 0; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 9px; }
+.project-picker select { min-width: 0; width: 100%; padding: 9px 11px; border: 1px solid #d6dfec; border-radius: 8px; background: #fff; }
+.project-picker .primary-button, .repo-mapper .primary-button { white-space: nowrap; }
+.hierarchy-label { margin: 25px 0 10px; color: #8a96a8; font-size: 10px; font-weight: 800; letter-spacing: .1em; text-transform: uppercase; }
+.project-list { min-width: 0; display: grid; gap: 12px; }
+.project-card { min-width: 0; padding: 17px; border: 1px solid #dfe6f1; border-radius: 12px; background: #fff; box-shadow: 0 5px 16px rgba(37, 53, 80, .04); }
+.project-title { min-width: 0; display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.project-title h3 { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.project-title span { min-width: 0; max-width: 42%; overflow: hidden; color: #8a96a8; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.repo-chips { display: flex; flex-wrap: wrap; gap: 7px; margin: 13px 0; }
+.repo-chip { padding: 5px 9px; border: 1px solid #dbe3ef; border-radius: 999px; color: #526077; background: #f7f9fc; font-size: 11px; }
+.repo-empty { color: #9aa5b5; font-size: 12px; }
+.repo-mapper { min-width: 0; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; padding-top: 12px; border-top: 1px solid #edf0f5; }
+.repo-mapper select { min-width: 0; width: 100%; padding: 7px 9px; border: 1px solid #d6dfec; border-radius: 7px; background: #fff; }
+.toast { position: fixed; right: 24px; bottom: 24px; max-width: 360px; padding: 11px 14px; border-radius: 9px; color: #fff; background: #24314a; box-shadow: 0 10px 30px rgba(22, 32, 51, .22); font-size: 12px; }
+@media (max-width: 1180px) {
+  .detail-heading { grid-template-columns: 1fr; }
+  .project-picker { width: 100%; }
+}
+@media (max-width: 1000px) {
+  .app-shell { grid-template-columns: 196px minmax(0, 1fr); }
+  .sidebar { padding-inline: 12px; }
+  .clients-workspace { grid-template-columns: 240px minmax(0, 1fr); }
+  .client-detail { padding-inline: 22px; }
+}
+@media (max-width: 760px) {
+  .app-shell { grid-template-columns: 76px minmax(0, 1fr); }
+  .brand > div:last-child, .nav-item span:last-child, .sidebar-footer > div { display: none; }
+  .nav-item { justify-content: center; }
+  .clients-workspace { grid-template-columns: 1fr; overflow-y: auto; }
+  .clients-panel { max-height: 260px; border-right: 0; border-bottom: 1px solid #e3e9f2; }
+  .client-detail { overflow: visible; }
+  .repo-mapper, .project-picker { grid-template-columns: 1fr; }
+}

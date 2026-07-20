@@ -22,6 +22,7 @@ AR_REPO="${AR_REPO:-takt}"
 SA_NAME="${SA_NAME:-takt-api}"
 SA_EMAIL="${SA_NAME}@${GCP_PROJECT}.iam.gserviceaccount.com"
 API_KEY_SECRET="${API_KEY_SECRET:-takt-api-key}"
+DB_URL_SECRET="${DB_URL_SECRET:-takt-database-url}"
 BQ_DATASET="${BQ_DATASET:-takt}"
 
 echo ">> Project: ${GCP_PROJECT}, Region: ${REGION}"
@@ -34,6 +35,8 @@ gcloud services enable \
   artifactregistry.googleapis.com \
   secretmanager.googleapis.com \
   bigquery.googleapis.com \
+  sqladmin.googleapis.com \
+  cloudscheduler.googleapis.com \
   iam.googleapis.com \
   --project="${GCP_PROJECT}"
 
@@ -72,6 +75,13 @@ for i in 1 2 3 4 5 6 7 8 9 10; do
   fi
   sleep 3
 done
+for ROLE in roles/cloudsql.client roles/run.invoker; do
+  gcloud projects add-iam-policy-binding "${GCP_PROJECT}" \
+    --member="serviceAccount:${SA_EMAIL}" \
+    --role="${ROLE}" \
+    --condition=None --quiet >/dev/null
+done
+
 # Data editor on the takt dataset only — least-privilege.
 # Use bq update to apply dataset-level ACL.
 TMP_ACL="$(mktemp)"
@@ -115,11 +125,21 @@ else
   echo "   secret already exists"
 fi
 
-echo ">> Granting runtime SA access to the secret"
-gcloud secrets add-iam-policy-binding "${API_KEY_SECRET}" \
-  --member="serviceAccount:${SA_EMAIL}" \
-  --role="roles/secretmanager.secretAccessor" \
-  --project="${GCP_PROJECT}" >/dev/null
+if ! gcloud secrets describe "${DB_URL_SECRET}" \
+  --project="${GCP_PROJECT}" >/dev/null 2>&1; then
+  gcloud secrets create "${DB_URL_SECRET}" \
+    --replication-policy="automatic" \
+    --project="${GCP_PROJECT}"
+  echo "   Add a SQLAlchemy psycopg URL as the first ${DB_URL_SECRET} version."
+fi
+
+echo ">> Granting runtime SA access to secrets"
+for SECRET in "${API_KEY_SECRET}" "${DB_URL_SECRET}"; do
+  gcloud secrets add-iam-policy-binding "${SECRET}" \
+    --member="serviceAccount:${SA_EMAIL}" \
+    --role="roles/secretmanager.secretAccessor" \
+    --project="${GCP_PROJECT}" >/dev/null
+done
 
 echo ">> Granting Cloud Build SA permission to deploy"
 PROJECT_NUMBER="$(gcloud projects describe "${GCP_PROJECT}" --format='value(projectNumber)')"

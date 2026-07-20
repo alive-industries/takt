@@ -85,7 +85,9 @@
 
   document.getElementById('admin-link').addEventListener('click', (e) => {
     e.preventDefault();
-    chrome.tabs.create({ url: chrome.runtime.getURL('admin/admin.html') });
+    const url = chrome.runtime.getURL('dashboard/dashboard.html#admin');
+    if (window.top !== window) window.top.location.href = url;
+    else chrome.tabs.create({ url });
   });
 
   btnBackfill.addEventListener('click', async () => {

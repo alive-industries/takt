@@ -12,7 +12,7 @@
       background: #f6f8fa;
       padding: 32px;
     }
-    .container { max-width: 760px; margin: 0 auto; }
+    .container { max-width: 980px; margin: 0 auto; }
     .card {
       background: #fff;
       border: 1px solid #d1d9e0;
@@ -72,7 +72,54 @@
       text-transform: uppercase;
       letter-spacing: 0.04em;
     }
+    .table-scroll { width: 100%; overflow-x: auto; }
+    #members-table { table-layout: fixed; min-width: 760px; }
+    #members-table th:nth-child(1) { width: 34%; }
+    #members-table th:nth-child(2) { width: 11%; }
+    #members-table th:nth-child(3) { width: 11%; }
+    #members-table th:nth-child(4) { width: 11%; }
+    #members-table th:nth-child(5) { width: 13%; }
+    #members-table th:nth-child(6) { width: 90px; }
+    #members-table td:first-child strong {
+      display: block;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
     td.actions-cell { white-space: nowrap; text-align: right; }
+    .member-actions { display: flex; justify-content: flex-end; gap: 6px; }
+    .member-actions .btn { min-width: 64px; padding-inline: 12px; }
+    .modal-overlay {
+      position: fixed;
+      inset: 0;
+      z-index: 1000;
+      display: grid;
+      place-items: center;
+      padding: 20px;
+      background: rgba(17, 24, 39, 0.42);
+      backdrop-filter: blur(3px);
+    }
+    .modal-overlay[hidden] { display: none; }
+    .member-modal {
+      width: min(420px, 100%);
+      overflow: hidden;
+      border: 1px solid #d8e0ec;
+      border-radius: 14px;
+      background: #fff;
+      box-shadow: 0 20px 55px rgba(25, 35, 55, 0.24);
+    }
+    .member-modal-header { padding: 20px 22px 15px; border-bottom: 1px solid #edf0f4; }
+    .member-modal-header h2 { font-size: 18px; }
+    .member-modal-header p { margin-top: 4px; color: #6d788a; font-size: 12px; }
+    .member-modal-body { display: grid; gap: 15px; padding: 20px 22px; }
+    .member-modal-body label { display: block; margin-bottom: 5px; color: #576579; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; }
+    .member-modal-body select { width: 100%; padding: 9px 10px; background: #fff; }
+    .member-modal-actions { display: flex; justify-content: flex-end; gap: 8px; padding: 14px 22px; border-top: 1px solid #edf0f4; background: #f8f9fb; }
+    @media (max-width: 760px) {
+      body { padding: 16px; }
+      .card { padding: 18px; }
+      .row { align-items: stretch; flex-direction: column; }
+    }
     .badge {
       display: inline-block;
       font-size: 11px;
@@ -145,18 +192,44 @@
         <span id="add-status" class="status"></span>
       </div>
 
-      <table id="members-table">
-        <thead>
-          <tr>
-            <th>Login</th>
-            <th>Role</th>
-            <th>Status</th>
-            <th>Source</th>
-            <th>Added</th>
-            <th></th>
-          </tr>
-        </thead>
-        <tbody id="members-tbody"></tbody>
+      <div class="table-scroll">
+        <table id="members-table">
+          <thead>
+            <tr>
+              <th>Login</th>
+              <th>Role</th>
+              <th>Status</th>
+              <th>Source</th>
+              <th>Added</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody id="members-tbody"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="card" id="clients-card" style="display:none;">
+      <h2>Clients and repositories</h2>
+      <p class="hint">A client can own multiple repositories; each repository maps to one client.</p>
+      <div class="row">
+        <input type="text" id="new-client-name" placeholder="Client name" autocomplete="off">
+        <button class="btn btn--primary" id="btn-add-client">Add client</button>
+      </div>
+      <div class="row" style="margin-top:10px;">
+        <select id="map-client"></select>
+        <select id="map-project"><option value="">Fetch GitHub projects…</option></select>
+        <button class="btn btn--primary" id="btn-map-project">Map project</button>
+      </div>
+      <div class="row" style="margin-top:10px;">
+        <select id="map-project-repo"><option value="">Select mapped project…</option></select>
+        <select id="map-repo"><option value="">Select GitHub repository…</option></select>
+        <button class="btn btn--primary" id="btn-map-repo">Map repository</button>
+        <span id="client-status" class="status"></span>
+      </div>
+      <table style="margin-top:12px;">
+        <thead><tr><th>Client</th><th>Projects and repositories</th></tr></thead>
+        <tbody id="clients-tbody"></tbody>
       </table>
     </div>
 
@@ -190,6 +263,36 @@
         <button class="btn btn--primary" id="btn-save-config">Save</button>
         <button class="btn btn--secondary" id="btn-refresh-config">Refresh from backend</button>
         <span id="config-status" class="status"></span>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-overlay" id="member-modal" hidden>
+    <div class="member-modal" role="dialog" aria-modal="true" aria-labelledby="member-modal-title">
+      <div class="member-modal-header">
+        <h2 id="member-modal-title">Edit member</h2>
+        <p id="member-modal-login"></p>
+      </div>
+      <div class="member-modal-body">
+        <div>
+          <label for="member-modal-role">Role</label>
+          <select id="member-modal-role">
+            <option value="member">Member</option>
+            <option value="admin">Admin</option>
+          </select>
+        </div>
+        <div>
+          <label for="member-modal-status">Access</label>
+          <select id="member-modal-status">
+            <option value="active">Active</option>
+            <option value="pending">Pending</option>
+            <option value="revoked">Revoked</option>
+          </select>
+        </div>
+      </div>
+      <div class="member-modal-actions">
+        <button class="btn btn--secondary" id="member-modal-cancel">Cancel</button>
+        <button class="btn btn--primary" id="member-modal-save">Save changes</button>
       </div>
     </div>
   </div>

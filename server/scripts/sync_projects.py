@@ -17,7 +17,7 @@ Usage:
     uv run python scripts/sync_projects.py --pat <github-pat> [--dry-run]
 
 The PAT needs `project` and `read:org` scope.
-GCP project / dataset come from the same .env / TAKT_* env vars as the server.
+The PostgreSQL URL comes from the same .env / TAKT_* env vars as the server.
 
 Idempotent: safe to re-run. Only inserts/updates rows where the title changed.
 """
@@ -35,9 +35,8 @@ from urllib.request import Request, urlopen
 # without setting PYTHONPATH.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from google.cloud import bigquery  # noqa: E402
-
-from app.config import get_settings  # noqa: E402
+from app.models import Project  # noqa: E402
+from app.services import store  # noqa: E402
 
 log = logging.getLogger("sync_projects")
 
@@ -61,8 +60,7 @@ def _graphql(pat: str, query: str, variables: dict) -> dict:
         payload = json.loads(resp.read())
     if payload.get("errors"):
         raise RuntimeError(
-            "GitHub GraphQL error: "
-            + "; ".join(e["message"] for e in payload["errors"])
+            "GitHub GraphQL error: " + "; ".join(e["message"] for e in payload["errors"])
         )
     return payload["data"]
 
@@ -100,37 +98,15 @@ def fetch_org_projects(pat: str, org: str) -> list[dict]:
     return [{"project_id": n["id"], "title": n["title"], "org": org} for n in nodes]
 
 
-def upsert_project(bq_client: bigquery.Client, table: str, project: dict) -> bool:
+def upsert_project(project: dict) -> bool:
     """Upsert one project row. Returns True if a row was inserted/updated."""
-    sql = f"""
-        MERGE `{table}` T
-        USING (SELECT @project_id AS project_id) S
-        ON T.project_id = S.project_id
-        WHEN MATCHED AND T.title != @title THEN UPDATE SET
-            title = @title,
-            org = COALESCE(@org, T.org),
-            updated_at = CURRENT_TIMESTAMP()
-        WHEN NOT MATCHED THEN INSERT
-            (project_id, title, org, updated_at)
-        VALUES
-            (@project_id, @title, @org, CURRENT_TIMESTAMP())
-    """
-    params = [
-        bigquery.ScalarQueryParameter("project_id", "STRING", project["project_id"]),
-        bigquery.ScalarQueryParameter("title", "STRING", project["title"]),
-        bigquery.ScalarQueryParameter("org", "STRING", project.get("org")),
-    ]
-    job = bq_client.query(
-        sql, job_config=bigquery.QueryJobConfig(query_parameters=params)
-    )
-    job.result()
+    store.upsert_projects([Project(**project)])
     return True
 
 
-def list_existing(bq_client: bigquery.Client, table: str) -> dict[str, str]:
+def list_existing() -> dict[str, str]:
     """Return {project_id: title} for all rows currently in the lookup table."""
-    sql = f"SELECT project_id, title FROM `{table}`"
-    return {r.project_id: r.title for r in bq_client.query(sql).result()}
+    return {project.project_id: project.title for project in store.list_projects()}
 
 
 def main() -> int:
@@ -143,21 +119,15 @@ def main() -> int:
     parser.add_argument(
         "--dry-run",
         action="store_true",
-        help="Report what would change without writing to BQ.",
+        help="Report what would change without writing to PostgreSQL.",
     )
-    parser.add_argument(
-        "--verbose", "-v", action="store_true", help="Show every project."
-    )
+    parser.add_argument("--verbose", "-v", action="store_true", help="Show every project.")
     args = parser.parse_args()
 
     logging.basicConfig(
         level=logging.DEBUG if args.verbose else logging.INFO,
         format="%(levelname)s %(message)s",
     )
-
-    s = get_settings()
-    table = s.projects_table
-    bq_client = bigquery.Client(project=s.gcp_project, location=s.bq_location)
 
     # --- Fetch all org projects from GitHub ---
     log.info("Fetching orgs for PAT user...")
@@ -178,7 +148,7 @@ def main() -> int:
         return 0
 
     # --- Compare against existing lookup table ---
-    existing = list_existing(bq_client, table)
+    existing = list_existing()
     log.info("Lookup table has %d existing row(s).", len(existing))
 
     new_count = 0
@@ -192,12 +162,12 @@ def main() -> int:
             log.info("  NEW: %s -> %r", pid, title)
             new_count += 1
             if not args.dry_run:
-                upsert_project(bq_client, table, p)
+                upsert_project(p)
         elif existing[pid] != title:
             log.info("  RENAME: %s\n    old: %r\n    new: %r", pid, existing[pid], title)
             updated_count += 1
             if not args.dry_run:
-                upsert_project(bq_client, table, p)
+                upsert_project(p)
         else:
             unchanged_count += 1
 

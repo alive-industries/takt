@@ -7,12 +7,17 @@ Project info and parked work for future agents/sessions.
 ### Server (`server/`)
 
 ```bash
+docker compose up -d postgres  # host port 55432; does not collide with intel-v1 on 5433
 cd server
 uv sync
-uv run pytest            # smoke tests (no BQ needed)
+uv run alembic upgrade head
+uv run pytest            # uses isolated local `takt_test` database
 uv run ruff check .
-uv run uvicorn app.main:app --reload   # local dev (needs ADC: gcloud auth application-default login)
+uv run uvicorn app.main:app --reload
 ```
+
+PostgreSQL is the transactional source of truth. BigQuery is an hourly analytics
+replica populated from `outbox_events` by `scripts/export_bigquery.py`.
 
 ### Extension (`extension/`)
 
@@ -44,25 +49,27 @@ rows where the title changed.
 
 - BQ dataset (prod): `cost-tracker-490815.takt` in `EU` (matches `billing_export`)
 - BQ dataset (test): `cost-tracker-490815.takt_test` in `EU` — used by the `takt-api-test` Cloud Run service ONLY. Keep prod/test data separate.
-- Tables (per dataset): `sessions`, `projects`, `members`, `org_config`, `audit_log`
+- Analytics replica: `session_facts`; PM-facing view: `time_tracking`; former BQ transactional tables remain migration sources
+- Cloud SQL PostgreSQL: one shared `takt-db` instance in `europe-west1`; prod/test use separate databases, users, and URL secrets
 - First admin seeded: `harveypitt`
 - Cloud Run: `takt-api` (prod) and `takt-api-test` (test) in `europe-west1`
-- Runtime SA: `takt-api@cost-tracker-490815.iam.gserviceaccount.com` (needs `bigquery.dataEditor` on BOTH `takt` and `takt_test` + `bigquery.jobUser` on project)
+- Cloud Run jobs: Alembic migration and hourly BigQuery outbox export
+- Runtime SA: `takt-api@cost-tracker-490815.iam.gserviceaccount.com` (Cloud SQL client, Run invoker, BQ dataset writer/job user)
 - Artifact Registry repo: `takt` in `europe-west1`
-- Bootstrap rerun (prod): `BQ_DATASET=takt ADMIN_LOGIN=<login> ./server/scripts/bootstrap.sh`
-- Bootstrap test dataset: `BQ_DATASET=takt_test ADMIN_LOGIN=<login> ./server/scripts/bootstrap.sh`
+- PostgreSQL admin seed: `uv run python scripts/bootstrap_postgres.py --admin-login <login>`
+- BigQuery analytics bootstrap remains `BQ_DATASET=<dataset> ./server/scripts/bootstrap.sh`
 
 ### Prod vs test deploys
 
-`cloudbuild.yaml` defaults to prod (`_SERVICE=takt-api`, `_BQ_DATASET=takt`).
-The test service must override BOTH so it never touches prod data:
+`cloudbuild.yaml` defaults to production. A test deployment must override the API,
+jobs, dataset, Cloud SQL instance, and database URL secret together:
 
 ```bash
 # prod
 gcloud builds submit --config=server/cloudbuild.yaml .
 # test
 gcloud builds submit --config=server/cloudbuild.yaml . \
-  --substitutions=_SERVICE=takt-api-test,_BQ_DATASET=takt_test
+  --substitutions=_SERVICE=takt-api-test,_BQ_DATASET=takt_test,_CLOUD_SQL_INSTANCE=cost-tracker-490815:europe-west1:takt-db,_DB_URL_SECRET=takt-test-database-url,_MIGRATION_JOB=takt-test-migrate,_EXPORT_JOB=takt-test-export-bigquery
 ```
 
 `schema.sql` uses the `__TAKT_DS__` placeholder for `<project>.<dataset>`; it
@@ -88,32 +95,33 @@ Patterns:
 - **Retention**: cache prunes entries older than 30 days on every write. Filter ranges fully within the cache window render instantly + revalidate; older ranges go straight to backend (no cache).
 - **Migration**: `migrateFromCompletedSessions()` folds the legacy `completedSessions[]` array into the new keyed cache on first wake of v0.3.0+, generating stable SHA-256-derived sessionIds for entries pre-v0.2.0.
 
-Why this exists: pre-v0.3.0, every My Time open did a synchronous BQ round-trip and felt slow. The cache makes the common path zero-latency while keeping BQ as the source of truth for cross-device / cross-user consistency.
+Why this exists: pre-v0.3.0, every My Time open did a synchronous backend round-trip and felt slow. The cache makes the common path zero-latency while PostgreSQL provides cross-device / cross-user consistency.
 
 ## Conventions
 
-- All BQ identifiers snake_case; extension internal state camelCase; conversion lives in `local-store.js#fromBackendSession` / `local-store.js#toBackendPayload`.
-- `session_id` is a UUID generated at START time on the extension. The server `MERGE`s on `session_id` so retries from the sync queue are idempotent. Backfill of legacy local sessions uses a deterministic SHA-256-derived UUID-shaped id so re-runs are also idempotent.
-- Times in BQ are TIMESTAMP (UTC), serialised as ISO 8601 over the wire.
+- PostgreSQL/BigQuery identifiers use snake_case; extension state uses camelCase; conversion lives in `local-store.js#fromBackendSession` / `local-store.js#toBackendPayload`.
+- `session_id` is generated at START time. PostgreSQL inserts use conflict-safe idempotency on `session_id`; legacy local sessions use deterministic SHA-256-derived IDs.
+- Times are PostgreSQL `TIMESTAMPTZ` and BigQuery `TIMESTAMP`, serialised as ISO 8601.
 - Hours rounded to 0.25 for display/Projects sync; raw `duration_ms` is source of truth.
 
-## BigQuery write path: MERGE not streaming
+## PostgreSQL and BigQuery write paths
 
-We deliberately **do not** use `client.insert_rows_json` / `tabledata.insertAll`.
+Interactive creates, edits, deletes, member changes, project metadata, and org config
+use PostgreSQL transactions. Session mutations write `audit_log` and `outbox_events`
+in the same commit. The extension receives success only after that commit.
 
-Streaming inserts hold rows in a buffer where DML (`UPDATE`/`DELETE`/`MERGE`) is rejected for ~30 min with:
+All entries use one model: `source` (`github`/`manual`) plus `entry_type`
+(`delivery`/`ops`). GitHub-only provenance is stored in `github_metadata` JSONB.
+Clients own many projects, and each project belongs to one client. Projects and
+repositories are many-to-many. Delivery entries resolve their client through the
+selected project/repository mapping. Labels are stored as `client — project` or
+`client — ops`.
 
-> `400 ... UPDATE or DELETE statement over table ... would affect rows in the streaming buffer, which is not supported`
-
-That blew up immediately when a user tried to edit a session they'd just stopped. So `insert_session` runs a `MERGE ... WHEN NOT MATCHED THEN INSERT` via `jobs.query`, which writes straight to permanent storage and is editable on the next request.
-
-Trade-offs we're accepting:
-- ~1-2s vs ~50ms write latency — fine, the extension's STOP path is async and saves locally first
-- DML rate limits (~1500 jobs/table/day) — fine, we're nowhere near for any realistic team size
-
-If/when we outgrow DML rate limits, the next step is the **Storage Write API** (`google-cloud-bigquery-storage`, `_default` stream). It has neither the streaming buffer nor the DML rate cap, but it's proto-based and noticeably more code.
-
-`_run_dml()` in `services/bq.py` translates any `BadRequest` whose message contains "streaming buffer" into a `StreamingBufferConflict` (HTTP 409 with code `streaming_buffer`). This will only ever fire on rows inserted by the legacy streaming path — i.e. anything written before this commit.
+The hourly Cloud Run export job claims pending outbox rows with `FOR UPDATE SKIP
+LOCKED`, loads a temporary BigQuery staging table, and merges into `session_facts`
+by `session_id`. Only complete normalized entries appear in the `time_tracking` view.
+Failed events remain pending. `scripts/reconcile_postgres_bigquery.py` compares row
+counts, active counts, and exact duration totals.
 
 ## Parked work (deferred)
 

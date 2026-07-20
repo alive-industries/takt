@@ -41,6 +41,9 @@ def test_openapi_schema_loads() -> None:
         assert "delete" in paths["/v1/sessions/{session_id}"]
         assert "/v1/config" in paths
         assert "/v1/members" in paths
+        assert "/v1/clients" in paths
+        assert "/v1/clients/{client_id}/projects" in paths
+        assert "/v1/clients/{client_id}/projects/{project_id}/repositories" in paths
 
 
 def test_session_update_requires_auth() -> None:
@@ -76,14 +79,9 @@ def test_session_update_negative_duration_rejected() -> None:
 def test_admin_routes_require_auth() -> None:
     with TestClient(app) as client:
         assert client.get("/v1/members").status_code == 401
-        assert (
-            client.post("/v1/members", json={"github_login": "x"}).status_code == 401
-        )
+        assert client.post("/v1/members", json={"github_login": "x"}).status_code == 401
         assert client.get("/v1/config").status_code == 401
-        assert (
-            client.put("/v1/config", json={"default_field_name": "Hours"}).status_code
-            == 401
-        )
+        assert client.put("/v1/config", json={"default_field_name": "Hours"}).status_code == 401
 
 
 def test_member_update_rejects_unknown_fields() -> None:

@@ -1,7 +1,7 @@
 [project]
 name = "takt-api"
 version = "0.1.0"
-description = "Backend API for Takt time tracker — verifies GitHub PATs and writes to BigQuery."
+description = "Transactional PostgreSQL API and BigQuery analytics exporter for Takt."
 requires-python = ">=3.11"
 dependencies = [
     "fastapi>=0.115.0",
@@ -12,6 +12,9 @@ dependencies = [
     "pydantic-settings>=2.4.0",
     "cachetools>=5.5.0",
     "python-json-logger>=2.0.7",
+    "sqlalchemy==2.0.41",
+    "psycopg[binary]==3.2.9",
+    "alembic==1.16.2",
 ]
 
 [dependency-groups]

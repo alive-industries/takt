@@ -3,7 +3,7 @@
 Every protected endpoint depends on `get_caller`, which:
   1. Extracts the bearer token from `Authorization`
   2. Resolves it to a GitHub user (cached)
-  3. Loads the corresponding member row from BQ; if missing, falls back to
+  3. Loads the corresponding member row from PostgreSQL; if missing, falls back to
      org-membership check and auto-admits org members
   4. Blocks revoked / unknown users with 403
 """
@@ -17,7 +17,7 @@ from fastapi import Depends, Header
 
 from app.errors import AdminRequired, InvalidPAT, NotAuthorised
 from app.models import GitHubUser, Member
-from app.services import bq
+from app.services import store
 from app.services.github import GitHubClient, get_github_client
 
 log = logging.getLogger(__name__)
@@ -49,7 +49,7 @@ async def get_caller(
     pat = await _extract_pat(authorization)
     user = await gh.resolve_user(pat)
 
-    member = bq.get_member(user.login)
+    member = store.get_member(user.login, user.id)
     if member is None:
         # Auto-admit if user is in the GitHub org (requires read:org scope on PAT)
         if await gh.is_org_member(pat, user):
@@ -61,11 +61,9 @@ async def get_caller(
                 source="org",
                 added_by="auto",
             )
-            bq.upsert_member(member)
+            member = store.upsert_member(member)
         else:
-            raise NotAuthorised(
-                "You are not approved to use Takt. Ask an admin to add you."
-            )
+            raise NotAuthorised("You are not approved to use Takt. Ask an admin to add you.")
 
     if member.status == "revoked":
         raise NotAuthorised("Your access has been revoked.")

@@ -3,6 +3,8 @@
 
   const sessionsBody = document.getElementById('sessions-body');
   const filterRepo = document.getElementById('filter-repo');
+  const filterUser = document.getElementById('filter-user');
+  const adminUserFilterWrap = document.getElementById('admin-user-filter-wrap');
   const filterFrom = document.getElementById('filter-from');
   const filterTo = document.getElementById('filter-to');
   const summaryCount = document.getElementById('summary-count');
@@ -24,6 +26,9 @@
    * syncedToProject, projectTitles, taktVersion, syncStatus, syncedAt.
    */
   let allSessions = [];
+  let currentUser = null;
+  let members = [];
+  let reportingClients = [];
   // Whether the active filter range is fully covered by the local cache
   // (last 30 days). Used to decide if we can serve from cache or have to
   // wait for the backend.
@@ -148,6 +153,12 @@
       from: `${from}T00:00:00Z`,
       to: `${to}T23:59:59Z`,
       skipReconcile: outOfCache,
+      backendOnly: !!filterUser?.value,
+      // Admin LIST without ?user means "all users" on the backend. Always
+      // scope it explicitly, including the default My Time selection.
+      ...(currentUser?.role === 'admin'
+        ? { user: filterUser.value || currentUser.login }
+        : {}),
     };
     const resp = await sendMessage('LIST_BACKEND_SESSIONS', params);
     if (!resp?.ok) {
@@ -157,7 +168,7 @@
       setSourcePip('error', `offline (${code})`);
       return false;
     }
-    if (outOfCache) {
+    if (outOfCache || filterUser?.value) {
       // Use the response records directly — they're already normalised by
       // the SW (cache.fromBackendSession). The recent-cache subset would
       // re-prune them on save.
@@ -177,8 +188,10 @@
   // Apply the repo filter (date/range filtering already happened on the
   // cache lookup). Returns the array used by both the table and the CSV.
   function getVisibleSessions() {
-    const repo = filterRepo.value;
-    return repo ? allSessions.filter((s) => s.repo === repo) : allSessions;
+    const context = filterRepo.value;
+    return context
+      ? allSessions.filter((s) => (s.repo || s.client) === context)
+      : allSessions;
   }
 
   // True only for repo values that look like a real GitHub `owner/name`
@@ -208,26 +221,34 @@
         const editTitle = editable ? ' title="Click to edit"' : '';
         const repoIsGh = isGithubRepo(s.repo);
         const hasIssue = s.issueNumber > 0;
-        const repoCell = repoIsGh
-          ? `<a href="https://github.com/${escapeHtml(s.repo)}" target="_blank">${escapeHtml(s.repo)}</a>`
-          : escapeHtml(s.repo);
-        // issueNumber=0 is the manual-entry "no linked issue" sentinel.
-        // Render the title as-is and skip the GitHub link in that case
-        // so the table doesn't show a phantom #0 link that would 404.
+        const projectLabel = s.entryType === 'ops' ? 'Ops' : (s.project || 'Needs project details');
+        const projectStatus = s.reportingStatus === 'pending_metadata'
+          ? `<div class="muted">Needs reporting details</div>`
+          : '';
+        const repositoryContext = repoIsGh
+          ? `<div class="muted"><a href="https://github.com/${escapeHtml(s.repo)}" target="_blank">${escapeHtml(s.repo)}</a></div>`
+          : '';
+        const projectCell = `<strong>${escapeHtml(projectLabel)}</strong>${repositoryContext}${projectStatus}`;
         let issueCell;
         if (!hasIssue) {
-          issueCell = `<span class="muted">${escapeHtml(s.issueTitle || '—')}</span>`;
+          issueCell = `<span class="muted">${escapeHtml(s.description || '—')}</span>`;
         } else {
           const issueInner = `#${s.issueNumber} ${escapeHtml(s.issueTitle || '')}`;
           issueCell = repoIsGh
             ? `<a href="https://github.com/${escapeHtml(s.repo)}/issues/${s.issueNumber}" target="_blank">${issueInner}</a>`
             : escapeHtml(s.issueTitle || `#${s.issueNumber}`);
         }
+        const creatorSuffix = s.createdByUser && s.createdByUser !== s.githubUser
+          ? ` (added by ${escapeHtml(s.createdByUser)})`
+          : '';
+        const attribution = s.githubUser
+          ? `<div class="muted">${escapeHtml(s.githubUser)}${creatorSuffix}</div>`
+          : '';
         return `
           <tr data-sid="${escapeHtml(s.sessionId || '')}">
             <td class="muted">${formatDate(s.completedAt)}</td>
-            <td>${repoCell}</td>
-            <td>${issueCell}</td>
+            <td>${projectCell}</td>
+            <td>${issueCell}${attribution}</td>
             <td class="mono${editableClass}" data-col="duration"${editTitle}>${formatDuration(s.durationMs)}</td>
             <td class="mono">${toHours(s.durationMs).toFixed(2)}</td>
             <td class="td-sync">${syncBadgeHtml(s.syncStatus)}</td>
@@ -302,6 +323,7 @@
       const resp = await sendMessage('UPDATE_BACKEND_SESSION', {
         sessionId,
         patch: { duration_ms: newMs },
+        backendOnly: !!filterUser?.value,
       });
       if (resp?.ok) {
         // Authoritative values from the server (in case rounding differs).
@@ -364,18 +386,21 @@
         ? `"${s.replace(/"/g, '""')}"` : s;
     };
 
-    const headers = ['Date', 'Repo', 'Issue #', 'Issue Title', 'Duration', 'Hours'];
+    const headers = ['Date', 'Type', 'Client', 'Repo', 'Project', 'Issue #', 'Description', 'Duration', 'Hours'];
     const rows = sessions.map((s) => [
       formatDateISO(s.completedAt),
-      s.repo,
-      s.issueNumber,
-      s.issueTitle || '',
+      s.entryType,
+      s.client || '',
+      s.repo || '',
+      s.project || '',
+      s.issueNumber || '',
+      s.description || '',
       formatDuration(s.durationMs),
       toHours(s.durationMs).toFixed(2),
     ]);
 
     const totalHours = sessions.reduce((sum, s) => sum + toHours(s.durationMs), 0);
-    rows.push(['Total', '', '', '', '', totalHours.toFixed(2)]);
+    rows.push(['Total', '', '', '', '', '', '', '', totalHours.toFixed(2)]);
 
     const csv = [headers, ...rows].map((r) => r.map(escCsv).join(',')).join('\n');
 
@@ -391,9 +416,9 @@
   // --- Init ---
 
   function populateFilters() {
-    const repos = [...new Set(allSessions.map((s) => s.repo))].sort();
+    const repos = [...new Set(allSessions.map((s) => s.repo || s.client).filter(Boolean))].sort();
     const prev = filterRepo.value;
-    filterRepo.innerHTML = '<option value="">All repos</option>';
+    filterRepo.innerHTML = '<option value="">All contexts</option>';
     for (const r of repos) {
       const opt = document.createElement('option');
       opt.value = r;
@@ -412,7 +437,8 @@
   // off the backend revalidate which mutates the cache and re-renders.
   async function refresh() {
     const { from } = activeRange();
-    const inCache = rangeFullyInCache(from);
+    const viewingAnotherUser = !!filterUser?.value;
+    const inCache = rangeFullyInCache(from) && !viewingAnotherUser;
 
     if (inCache) {
       // 1) Synchronous-ish read from cache → instant render.
@@ -428,19 +454,43 @@
       // Range is older than cache retention — go straight to backend and
       // render the response directly (bypassing the cache, which would
       // prune anything outside the 30-day window on the next save).
-      setSourcePip('backend', 'fetching from BigQuery…');
+      setSourcePip('backend', 'fetching from server…');
       const ok = await revalidateFromBackend({ outOfCache: true });
-      if (!ok) {
-        // Even fallback empty: still render cache so user sees what we have.
+      if (!ok && !viewingAnotherUser) {
+        // Only the caller's view may fall back to local cache. Showing local
+        // rows while another member is selected would misattribute entries.
         await loadFromCache();
+        populateFilters();
+        render();
+      } else if (!ok) {
+        allSessions = [];
         populateFilters();
         render();
       }
     }
   }
 
+  async function loadIdentity() {
+    const meResp = await sendMessage('GET_BACKEND_ME');
+    if (!meResp?.ok) return;
+    currentUser = meResp.me;
+    const clientsResp = await sendMessage('LIST_CLIENTS');
+    reportingClients = clientsResp?.clients || [];
+    if (currentUser.role !== 'admin') return;
+
+    const membersResp = await sendMessage('ADMIN_LIST_MEMBERS');
+    members = (membersResp?.members || []).filter((m) => m.status === 'active');
+    adminUserFilterWrap.hidden = false;
+    filterUser.innerHTML = `<option value="">My time (${escapeHtml(currentUser.login)})</option>` +
+      members
+        .filter((m) => m.github_login !== currentUser.login)
+        .map((m) => `<option value="${escapeHtml(m.github_login)}">${escapeHtml(m.github_login)}</option>`)
+        .join('');
+  }
+
   async function init() {
     setDefaultDateRange();
+    await loadIdentity();
     refresh();
     refreshActiveTimer();
     // Kick off a GitHub repo fetch in the background so the Add modal has
@@ -624,6 +674,7 @@
   // Date filter changes -> different range -> refetch + reconcile.
   // Repo filter is purely client-side; just re-render.
   filterRepo.addEventListener('change', render);
+  filterUser.addEventListener('change', refresh);
   filterFrom.addEventListener('change', refresh);
   filterTo.addEventListener('change', refresh);
   btnExport.addEventListener('click', exportCsv);
@@ -639,7 +690,11 @@
 
   const btnAdd = document.getElementById('btn-add');
   const addModal = document.getElementById('add-modal');
-  const addOrgSelect = document.getElementById('add-org');
+  const addModeSelect = document.getElementById('add-mode');
+  const addClientSelect = document.getElementById('add-client');
+  const addGithubFields = document.getElementById('add-github-fields');
+  const addMemberRow = document.getElementById('add-member-row');
+  const addMemberSelect = document.getElementById('add-member');
   const addRepoSelect = document.getElementById('add-repo');
   const addProjectSelect = document.getElementById('add-project');
   const addIssueSelect = document.getElementById('add-issue-select');
@@ -658,70 +713,19 @@
   let addDurationHandle = null;
   // Cached lookups so we can resolve a selection back to its data after
   // the user clicks Submit/Start without re-fetching.
-  let projectsByRepo = new Map();      // repo -> [{ id, title, number }]
   let issuesByProject = new Map();     // projectId -> [{ number, title, repo }]
 
-  function populateOrgSelect(orgs, selected) {
-    const list = [...new Set(orgs || [])].sort();
-    addOrgSelect.innerHTML = '<option value="">Select an organization…</option>' +
-      list.map((o) => `<option value="${escapeHtml(o)}"${o === selected ? ' selected' : ''}>${escapeHtml(o)}</option>`).join('');
-    addOrgSelect.disabled = list.length === 0;
+  function updateAddMode() {
+    const opsMode = addModeSelect.value === 'ops';
+    addGithubFields.hidden = opsMode;
+    addTitleHint.textContent = opsMode ? '(required)' : '(autofilled when issue selected)';
   }
 
-  function populateRepoSelect(repos, selected, org) {
-    // Historical repos from past sessions belonging to the selected org —
-    // surfaces repos the user has tracked even if the GitHub fetch hasn't
-    // returned yet (or returns nothing).
-    const fromSessions = org
-      ? [...new Set(allSessions.map((s) => s.repo))]
-          .filter((r) => /^[^/\s]+\/[^/\s]+$/.test(r) && r.startsWith(`${org}/`))
-      : [];
-    const merged = [...new Set([...(repos || []), ...fromSessions])].sort();
-    if (merged.length === 0) {
-      addRepoSelect.innerHTML = '<option value="">No repos found</option>';
-      addRepoSelect.disabled = false;
-      return;
-    }
-    addRepoSelect.disabled = false;
-    addRepoSelect.innerHTML = '<option value="">Select a repo…</option>' +
-      merged.map((r) => `<option value="${escapeHtml(r)}"${r === selected ? ' selected' : ''}>${escapeHtml(r)}</option>`).join('');
-  }
-
-  function setRepoSelectState(state) {
-    if (state === 'loading') {
-      addRepoSelect.innerHTML = '<option value="">Loading repos…</option>';
-      addRepoSelect.disabled = true;
-    } else if (state === 'idle') {
-      addRepoSelect.innerHTML = '<option value="">Pick an organization first</option>';
-      addRepoSelect.disabled = true;
-    } else if (state === 'error') {
-      addRepoSelect.innerHTML = '<option value="">(error fetching repos)</option>';
-      addRepoSelect.disabled = false;
-    }
-  }
-
-  function setProjectSelectState(state, projects) {
-    if (state === 'loading') {
-      addProjectSelect.innerHTML = '<option value="">Loading projects…</option>';
-      addProjectSelect.disabled = true;
-      return;
-    }
-    if (state === 'idle') {
-      addProjectSelect.innerHTML = '<option value="">Pick a repo first</option>';
-      addProjectSelect.disabled = true;
-      return;
-    }
-    if (state === 'error') {
-      addProjectSelect.innerHTML = '<option value="">(error fetching projects)</option>';
-      addProjectSelect.disabled = false;
-      return;
-    }
-    // ready
-    addProjectSelect.disabled = false;
-    addProjectSelect.innerHTML = '<option value="">No project</option>' +
-      (projects || []).map((p) =>
-        `<option value="${escapeHtml(p.id)}">${escapeHtml(p.title)}</option>`
-      ).join('');
+  function populateClientSelect() {
+    addClientSelect.innerHTML = '<option value="">Select a client…</option>' +
+      reportingClients
+        .map((client) => `<option value="${client.client_id}">${escapeHtml(client.name)}</option>`)
+        .join('');
   }
 
   function setIssueSelectState(state, issues) {
@@ -731,77 +735,64 @@
       return;
     }
     if (state === 'idle') {
-      addIssueSelect.innerHTML = '<option value="">Pick a project first</option>';
+      addIssueSelect.innerHTML = '<option value="">Pick a repository first</option>';
       addIssueSelect.disabled = true;
       return;
     }
     if (state === 'error') {
-      addIssueSelect.innerHTML = '<option value="">(error fetching issues)</option>';
+      addIssueSelect.innerHTML = '<option value="">Unable to fetch issues</option>';
       addIssueSelect.disabled = false;
       return;
     }
     addIssueSelect.disabled = false;
-    addIssueSelect.innerHTML = '<option value="">No issue (use title below)</option>' +
-      (issues || []).map((i) => {
-        const stateBadge = i.state === 'OPEN' ? '' : ' [closed]';
-        return `<option value="${i.number}">#${i.number} ${escapeHtml(i.title)}${stateBadge}</option>`;
+    addIssueSelect.innerHTML = '<option value="">No issue (use description)</option>' +
+      (issues || []).map((issue) => {
+        const state = issue.state === 'OPEN' ? '' : ' [closed]';
+        return `<option value="${issue.number}">#${issue.number} ${escapeHtml(issue.title)}${state}</option>`;
       }).join('');
   }
 
-  async function onOrgChange() {
-    const org = addOrgSelect.value;
-    // Reset the downstream cascade — the picked repo no longer applies.
-    setProjectSelectState('idle');
+  function selectedClient() {
+    return reportingClients.find(
+      (client) => String(client.client_id) === addClientSelect.value
+    );
+  }
+
+  function selectedClientProject() {
+    return selectedClient()?.projects?.find(
+      (project) => project.project_id === addProjectSelect.value
+    );
+  }
+
+  function onClientChange() {
+    const projects = selectedClient()?.projects || [];
+    addProjectSelect.disabled = projects.length === 0;
+    addProjectSelect.innerHTML = '<option value="">Select a project…</option>' +
+      projects.map((project) =>
+        `<option value="${escapeHtml(project.project_id)}">${escapeHtml(project.title)}</option>`
+      ).join('');
+    addRepoSelect.disabled = true;
+    addRepoSelect.innerHTML = '<option value="">Pick a project first</option>';
     setIssueSelectState('idle');
-    if (!org) {
-      setRepoSelectState('idle');
-      return;
-    }
-    const { settings = {} } = await chrome.storage.local.get('settings');
-    const cached = settings.knownReposByOrg?.[org];
-    if (cached?.length) {
-      populateRepoSelect(cached, '', org);
-    } else {
-      setRepoSelectState('loading');
-    }
-    // Always re-fetch in the background so the list stays fresh.
-    const resp = await sendMessage('FETCH_USER_REPOS', { org });
-    if (addModal.hidden || addOrgSelect.value !== org) return;
-    if (resp?.ok) {
-      populateRepoSelect(resp.repos, addRepoSelect.value, org);
-    } else if (!cached?.length) {
-      setRepoSelectState('error');
-    }
+  }
+
+  function onProjectChange() {
+    const repositories = selectedClientProject()?.repositories || [];
+    addRepoSelect.disabled = repositories.length === 0;
+    addRepoSelect.innerHTML = '<option value="">Select a repository…</option>' +
+      repositories.map((repo) =>
+        `<option value="${escapeHtml(repo)}">${escapeHtml(repo)}</option>`
+      ).join('');
+    setIssueSelectState('idle');
   }
 
   async function onRepoChange() {
-    const repo = addRepoSelect.value;
-    setIssueSelectState('idle');
-    if (!repo) {
-      setProjectSelectState('idle');
-      return;
-    }
-    if (projectsByRepo.has(repo)) {
-      setProjectSelectState('ready', projectsByRepo.get(repo));
-      return;
-    }
-    setProjectSelectState('loading');
-    const resp = await sendMessage('FETCH_REPO_PROJECTS', { repo });
-    if (!resp?.ok) {
-      setProjectSelectState('error');
-      return;
-    }
-    projectsByRepo.set(repo, resp.projects);
-    setProjectSelectState('ready', resp.projects);
-  }
-
-  async function onProjectChange() {
     const projectId = addProjectSelect.value;
-    if (!projectId) {
+    const repo = addRepoSelect.value;
+    if (!projectId || !repo) {
       setIssueSelectState('idle');
       return;
     }
-    const repo = addRepoSelect.value;
     const cacheKey = `${projectId}|${repo}`;
     if (issuesByProject.has(cacheKey)) {
       setIssueSelectState('ready', issuesByProject.get(cacheKey));
@@ -837,6 +828,9 @@
   async function openAddModal() {
     addErrorEl.textContent = '';
     addDateInput.value = formatDateISO(Date.now());
+    addModeSelect.value = 'delivery';
+    populateClientSelect();
+    updateAddMode();
     addTitleInput.value = '';
     addTitleHint.textContent = '(required when no issue is linked)';
 
@@ -844,59 +838,21 @@
     addDurationInput.value = '';
     addDurationHandle = self.TaktTime.bindTimeInput(addDurationInput, { initialMs: 0 });
 
-    projectsByRepo = new Map();
     issuesByProject = new Map();
-    setProjectSelectState('idle');
-    setIssueSelectState('idle');
-
-    // Render cached orgs/repos (settings.knownOrgs, settings.knownReposByOrg
-    // — falling back to legacy knownRepos for the primary Takt org) so the
-    // dropdowns aren't empty on first open. Then kick fresh fetches in
-    // parallel; when they land we re-render, preserving any user selection.
-    const { settings = {} } = await chrome.storage.local.get('settings');
-    const cachedOrgs = settings.knownOrgs || [];
-    // Default selection: the primary Takt org so existing users see no
-    // behavioural change on first open.
-    const defaultOrg = cachedOrgs.includes('alive-industries')
-      ? 'alive-industries'
-      : (cachedOrgs[0] || 'alive-industries');
-    const initialOrgs = cachedOrgs.length ? cachedOrgs : [defaultOrg];
-    populateOrgSelect(initialOrgs, defaultOrg);
-    addOrgSelect.value = defaultOrg;
-
-    // Seed the repo dropdown with whatever we have cached for the default
-    // org (knownReposByOrg, falling back to the legacy knownRepos field).
-    const seededRepos =
-      settings.knownReposByOrg?.[defaultOrg]
-      || (defaultOrg === 'alive-industries' ? settings.knownRepos : null)
-      || [];
-    if (seededRepos.length) {
-      populateRepoSelect(seededRepos, '', defaultOrg);
-    } else {
-      setRepoSelectState('loading');
+    addMemberRow.hidden = currentUser?.role !== 'admin';
+    if (currentUser?.role === 'admin') {
+      const logins = [...new Set([currentUser.login, ...members.map((m) => m.github_login)])].sort();
+      addMemberSelect.innerHTML = logins
+        .map((login) => `<option value="${escapeHtml(login)}"${login === currentUser.login ? ' selected' : ''}>${escapeHtml(login)}</option>`)
+        .join('');
     }
-
-    // Refresh orgs in the background; if new ones appear, re-populate while
-    // preserving the user's current selection.
-    sendMessage('FETCH_USER_ORGS').then((resp) => {
-      if (!resp?.ok || addModal.hidden) return;
-      populateOrgSelect(resp.orgs, addOrgSelect.value || defaultOrg);
-    }).catch(() => {});
-
-    // Refresh repos for the default org in the background.
-    sendMessage('FETCH_USER_REPOS', { org: defaultOrg }).then((resp) => {
-      if (addModal.hidden || addOrgSelect.value !== defaultOrg) return;
-      if (resp?.ok) {
-        populateRepoSelect(resp.repos, addRepoSelect.value, defaultOrg);
-      } else if (!seededRepos.length) {
-        setRepoSelectState('error');
-      }
-    }).catch(() => {
-      if (!addModal.hidden && !seededRepos.length) setRepoSelectState('error');
-    });
-
+    addProjectSelect.disabled = true;
+    addProjectSelect.innerHTML = '<option value="">Pick a client first</option>';
+    addRepoSelect.disabled = true;
+    addRepoSelect.innerHTML = '<option value="">Pick a project first</option>';
+    setIssueSelectState('idle');
     addModal.hidden = false;
-    addOrgSelect.focus();
+    addClientSelect.focus();
   }
 
   function closeAddModal() {
@@ -911,29 +867,49 @@
   //   { ok: true, ...fields }  for a valid form, or
   //   { ok: false, error }     so the caller can show it.
   function readAddForm({ requireDuration }) {
-    const repo = addRepoSelect.value;
-    if (!repo) return { ok: false, error: 'Pick a repo.' };
+    const entryType = addModeSelect.value;
+    const clientId = Number(addClientSelect.value);
+    const selectedClient = reportingClients.find((client) => client.client_id === clientId);
+    if (!selectedClient) return { ok: false, error: 'Pick a client.' };
 
-    const issueRaw = parseInt(addIssueSelect.value, 10);
+    const delivery = entryType === 'delivery';
+    const repo = delivery ? addRepoSelect.value : null;
+    const projectId = delivery ? addProjectSelect.value : null;
+    const mappedProject = selectedClientProject();
+    const selectedProject = mappedProject
+      ? { id: mappedProject.project_id, title: mappedProject.title }
+      : null;
+    if (delivery && !selectedProject) return { ok: false, error: 'Pick a project.' };
+
+    const issueRaw = delivery ? parseInt(addIssueSelect.value, 10) : 0;
     const issueNumber = Number.isFinite(issueRaw) && issueRaw > 0 ? issueRaw : 0;
+    const description = addTitleInput.value.trim();
+    if (!description) return { ok: false, error: 'Description is required.' };
 
-    const issueTitle = addTitleInput.value.trim();
-    if (issueNumber === 0 && !issueTitle) {
-      return { ok: false, error: 'Title is required when no issue is linked.' };
-    }
+    const result = {
+      ok: true,
+      source: 'manual',
+      entryType,
+      clientId,
+      client: selectedClient.name,
+      repo,
+      reportingProjectId: selectedProject?.id || null,
+      project: selectedProject?.title || null,
+      issueNumber,
+      issueTitle: issueNumber > 0 ? description : null,
+      description,
+    };
+    if (!requireDuration) return result;
 
-    if (requireDuration) {
-      const durationMs = addDurationHandle?.getMs() ?? null;
-      if (!durationMs || durationMs <= 0) {
-        return { ok: false, error: 'Duration must be greater than zero.' };
-      }
-      const dateStr = addDateInput.value;
-      if (!dateStr) return { ok: false, error: 'Date is required.' };
-      const completedAt = new Date(`${dateStr}T17:00:00`).getTime();
-      if (!Number.isFinite(completedAt)) return { ok: false, error: 'Invalid date.' };
-      return { ok: true, repo, issueNumber, issueTitle: issueTitle || null, completedAt, durationMs };
+    const durationMs = addDurationHandle?.getMs() ?? null;
+    if (!durationMs || durationMs <= 0) {
+      return { ok: false, error: 'Duration must be greater than zero.' };
     }
-    return { ok: true, repo, issueNumber, issueTitle: issueTitle || null };
+    const dateStr = addDateInput.value;
+    if (!dateStr) return { ok: false, error: 'Date is required.' };
+    const completedAt = new Date(`${dateStr}T17:00:00`).getTime();
+    if (!Number.isFinite(completedAt)) return { ok: false, error: 'Invalid date.' };
+    return { ...result, completedAt, durationMs };
   }
 
   async function submitAddEntry() {
@@ -943,11 +919,23 @@
     showAddError('');
     addSubmitBtn.disabled = true;
     const resp = await sendMessage('ADD_MANUAL_SESSION', {
+      source: form.source,
+      entryType: form.entryType,
+      clientId: form.clientId,
+      client: form.client,
       repo: form.repo,
+      reportingProjectId: form.reportingProjectId,
+      project: form.project,
       issueNumber: form.issueNumber,
       issueTitle: form.issueTitle,
+      description: form.description,
       completedAt: form.completedAt,
       durationMs: form.durationMs,
+      // Only historical creates carry an admin-selected target. START below
+      // intentionally omits memberLogin so live time belongs to the caller.
+      ...(currentUser?.role === 'admin' && addMemberSelect.value !== currentUser.login
+        ? { memberLogin: addMemberSelect.value }
+        : {}),
     });
     addSubmitBtn.disabled = false;
 
@@ -969,10 +957,16 @@
     showAddError('');
     addStartBtn.disabled = true;
     const resp = await sendMessage('START', {
+      source: form.source,
+      entryType: form.entryType,
+      clientId: form.clientId,
+      client: form.client,
       repo: form.repo,
+      reportingProjectId: form.reportingProjectId,
+      project: form.project,
       issueNumber: form.issueNumber,
-      issueTitle: form.issueTitle
-        || (form.issueNumber > 0 ? `Issue #${form.issueNumber}` : 'Untitled'),
+      issueTitle: form.issueTitle,
+      description: form.description,
       sourceUrl: null,
     });
     addStartBtn.disabled = false;
@@ -989,9 +983,10 @@
   addCloseBtn.addEventListener('click', closeAddModal);
   addSubmitBtn.addEventListener('click', submitAddEntry);
   addStartBtn.addEventListener('click', startTrackingFromModal);
-  addOrgSelect.addEventListener('change', onOrgChange);
-  addRepoSelect.addEventListener('change', onRepoChange);
+  addModeSelect.addEventListener('change', updateAddMode);
+  addClientSelect.addEventListener('change', onClientChange);
   addProjectSelect.addEventListener('change', onProjectChange);
+  addRepoSelect.addEventListener('change', onRepoChange);
   addIssueSelect.addEventListener('change', onIssueChange);
   addModal.addEventListener('click', (e) => {
     if (e.target === addModal) closeAddModal();

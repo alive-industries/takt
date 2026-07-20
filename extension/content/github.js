@@ -182,7 +182,7 @@
       // leaving only the hover title tooltip). data-action="BLOCKED" routes
       // to the notice without sending a START the backend would reject.
       container.innerHTML = `
-        <button class="takt-btn takt-btn--blocked" data-action="BLOCKED" title="Timer active on ${currentSession.repo}#${currentSession.issueNumber}">
+        <button class="takt-btn takt-btn--blocked" data-action="BLOCKED" title="Timer active on ${currentSession.issueNumber > 0 ? `${currentSession.repo}#${currentSession.issueNumber}` : (currentSession.description || currentSession.client || 'another task')}">
           <span>\u25B6</span> Track time
         </button>
       `;
@@ -277,7 +277,9 @@
         // A timer is already running on another issue. Show the same notice
         // the hover tooltip carries, so a click isn't silent.
         const ref = currentSession
-          ? `${currentSession.repo}#${currentSession.issueNumber}`
+          ? (currentSession.issueNumber > 0
+            ? `${currentSession.repo}#${currentSession.issueNumber}`
+            : (currentSession.description || currentSession.client || 'another task'))
           : 'another task';
         showStatusMessage(container, `Timer already active on ${ref}`, 'warning', 6000);
         break;

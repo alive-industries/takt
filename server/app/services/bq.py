@@ -77,13 +77,13 @@ def insert_session(row: SessionIn, *, github_user: str, github_user_id: int) -> 
 
     # Upsert project lookup rows so titles stay current.
     if row.project_ids:
-        upsert_projects([
-            Project(project_id=pid, title=title)
-            for pid, title in zip(
-                row.project_ids, row.project_titles or [], strict=False
-            )
-            if pid and title
-        ])
+        upsert_projects(
+            [
+                Project(project_id=pid, title=title)
+                for pid, title in zip(row.project_ids, row.project_titles or [], strict=False)
+                if pid and title
+            ]
+        )
 
     sql = f"""
         MERGE `{s.sessions_table}` T
@@ -109,24 +109,16 @@ def insert_session(row: SessionIn, *, github_user: str, github_user_id: int) -> 
         bigquery.ScalarQueryParameter("issue_number", "INT64", row.issue_number),
         bigquery.ScalarQueryParameter("issue_title", "STRING", row.issue_title),
         bigquery.ScalarQueryParameter("issue_url", "STRING", row.issue_url),
-        bigquery.ScalarQueryParameter(
-            "started_at", "TIMESTAMP", row.started_at.astimezone(UTC)
-        ),
+        bigquery.ScalarQueryParameter("started_at", "TIMESTAMP", row.started_at.astimezone(UTC)),
         bigquery.ScalarQueryParameter(
             "completed_at", "TIMESTAMP", row.completed_at.astimezone(UTC)
         ),
         bigquery.ScalarQueryParameter("duration_ms", "INT64", row.duration_ms),
         bigquery.ScalarQueryParameter("duration_hours", "FLOAT64", row.duration_hours),
         bigquery.ScalarQueryParameter("source_url", "STRING", row.source_url),
-        bigquery.ScalarQueryParameter(
-            "synced_to_project", "BOOL", bool(row.synced_to_project)
-        ),
-        bigquery.ArrayQueryParameter(
-            "project_titles", "STRING", row.project_titles or []
-        ),
-        bigquery.ArrayQueryParameter(
-            "project_ids", "STRING", row.project_ids or []
-        ),
+        bigquery.ScalarQueryParameter("synced_to_project", "BOOL", bool(row.synced_to_project)),
+        bigquery.ArrayQueryParameter("project_titles", "STRING", row.project_titles or []),
+        bigquery.ArrayQueryParameter("project_ids", "STRING", row.project_ids or []),
         bigquery.ScalarQueryParameter("takt_version", "STRING", row.takt_version),
         bigquery.ScalarQueryParameter(
             "client_ts",
@@ -237,8 +229,8 @@ def update_session(
 
     sql = f"""
         UPDATE `{s.sessions_table}`
-        SET {', '.join(set_clauses)}
-        WHERE {' AND '.join(where)}
+        SET {", ".join(set_clauses)}
+        WHERE {" AND ".join(where)}
     """
     job = _run_dml(sql, params)
     if (job.num_dml_affected_rows or 0) == 0:
@@ -246,9 +238,7 @@ def update_session(
     return _get_session(session_id, caller_login=caller_login, is_admin=is_admin)
 
 
-def _get_session(
-    session_id: str, *, caller_login: str, is_admin: bool
-) -> SessionOut | None:
+def _get_session(session_id: str, *, caller_login: str, is_admin: bool) -> SessionOut | None:
     s = get_settings()
     where = ["s.session_id = @id", "s.deleted_at IS NULL"]
     params: list[bigquery.ScalarQueryParameter] = [
@@ -259,9 +249,7 @@ def _get_session(
         params.append(bigquery.ScalarQueryParameter("caller", "STRING", caller_login))
     sql = f"{_session_select(s.sessions_table)} WHERE {' AND '.join(where)} LIMIT 1"
     rows = list(
-        _client()
-        .query(sql, job_config=bigquery.QueryJobConfig(query_parameters=params))
-        .result()
+        _client().query(sql, job_config=bigquery.QueryJobConfig(query_parameters=params)).result()
     )
     return SessionOut(**dict(rows[0])) if rows else None
 
@@ -298,9 +286,7 @@ def total_hours_for_issue(repo: str, issue_number: int) -> float:
         bigquery.ScalarQueryParameter("repo", "STRING", repo),
         bigquery.ScalarQueryParameter("issue_number", "INT64", issue_number),
     ]
-    job = _client().query(
-        sql, job_config=bigquery.QueryJobConfig(query_parameters=params)
-    )
+    job = _client().query(sql, job_config=bigquery.QueryJobConfig(query_parameters=params))
     rows = list(job.result())
     if not rows or rows[0].total is None:
         return 0.0
@@ -319,7 +305,7 @@ def soft_delete_session(session_id: str, *, caller_login: str, is_admin: bool) -
     sql = f"""
         UPDATE `{s.sessions_table}`
         SET deleted_at = CURRENT_TIMESTAMP()
-        WHERE {' AND '.join(where)}
+        WHERE {" AND ".join(where)}
     """
     job = _run_dml(sql, params)
     return (job.num_dml_affected_rows or 0) > 0
@@ -359,9 +345,7 @@ def upsert_projects(projects: list[Project]) -> None:
             bigquery.ScalarQueryParameter("title", "STRING", p.title),
             bigquery.ScalarQueryParameter("org", "STRING", p.org),
         ]
-        bq.query(
-            sql, job_config=bigquery.QueryJobConfig(query_parameters=params)
-        ).result()
+        bq.query(sql, job_config=bigquery.QueryJobConfig(query_parameters=params)).result()
 
 
 def list_projects() -> list[Project]:
@@ -514,9 +498,7 @@ def update_org_config(update: OrgConfigUpdate, *, updated_by: str) -> OrgConfig:
         bigquery.ScalarQueryParameter(
             "project_fields", "STRING", json.dumps(merged.project_fields)
         ),
-        bigquery.ArrayQueryParameter(
-            "excluded_projects", "STRING", merged.excluded_projects
-        ),
+        bigquery.ArrayQueryParameter("excluded_projects", "STRING", merged.excluded_projects),
         bigquery.ScalarQueryParameter("updated_by", "STRING", updated_by),
     ]
     bq.query(sql, job_config=bigquery.QueryJobConfig(query_parameters=params)).result()

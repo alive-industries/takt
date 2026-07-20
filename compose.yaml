@@ -1,0 +1,21 @@
+services:
+  postgres:
+    image: postgres:16.9-bookworm
+    container_name: takt_postgres
+    environment:
+      POSTGRES_DB: takt
+      POSTGRES_USER: takt
+      POSTGRES_PASSWORD: takt
+    ports:
+      - "55432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U takt -d takt"]
+      interval: 2s
+      timeout: 3s
+      retries: 15
+    volumes:
+      - takt_postgres_data:/var/lib/postgresql/data
+
+volumes:
+  takt_postgres_data:
+    name: takt_postgres_data

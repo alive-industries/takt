@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends
 
 from app.auth import Caller, get_caller, require_admin
 from app.models import Member, MemberUpdate, OrgConfig, OrgConfigUpdate
-from app.services import bq
+from app.services import store
 
 router = APIRouter(prefix="/v1", tags=["admin"])
 
@@ -16,12 +16,12 @@ router = APIRouter(prefix="/v1", tags=["admin"])
 
 @router.get("/config", response_model=OrgConfig)
 def get_config(caller: Caller = Depends(get_caller)) -> OrgConfig:
-    return bq.get_org_config()
+    return store.get_org_config()
 
 
 @router.put("/config", response_model=OrgConfig)
 def put_config(update: OrgConfigUpdate, caller: Caller = Depends(require_admin)) -> OrgConfig:
-    return bq.update_org_config(update, updated_by=caller.user.login)
+    return store.update_org_config(update, updated_by=caller.user.login)
 
 
 # --- Members: admin-only ---
@@ -29,12 +29,12 @@ def put_config(update: OrgConfigUpdate, caller: Caller = Depends(require_admin))
 
 @router.get("/members", response_model=list[Member], dependencies=[Depends(require_admin)])
 def list_members() -> list[Member]:
-    return bq.list_members()
+    return store.list_members()
 
 
 @router.post("/members", response_model=Member)
 def upsert_member(update: MemberUpdate, caller: Caller = Depends(require_admin)) -> Member:
-    existing = bq.get_member(update.github_login)
+    existing = store.get_member(update.github_login)
     member = Member(
         github_login=update.github_login,
         github_user_id=existing.github_user_id if existing else None,
@@ -45,5 +45,4 @@ def upsert_member(update: MemberUpdate, caller: Caller = Depends(require_admin))
         added_at=existing.added_at if existing else datetime.now(UTC),
         updated_at=datetime.now(UTC),
     )
-    bq.upsert_member(member)
-    return member
+    return store.upsert_member(member, actor=caller.user.login)

@@ -69,6 +69,9 @@ export async function getMe() {
 }
 
 export async function pushSession(session) {
+  // Keep this as a single idempotent create attempt. The caller owns durable
+  // retry/queue semantics, keyed by session_id; retrying a modified payload
+  // here could silently drop planned context or member attribution fields.
   return request('POST', '/v1/sessions', { body: session });
 }
 
@@ -117,6 +120,30 @@ export async function upsertMember(member) {
 export async function putOrgConfig(config) {
   // config: { default_field_name?, project_fields?, excluded_projects? }
   return request('PUT', '/v1/config', { body: config });
+}
+
+// --- Clients and repository mappings ---
+
+export async function listClients() {
+  return request('GET', '/v1/clients');
+}
+
+export async function createClient(client) {
+  return request('POST', '/v1/clients', { body: client });
+}
+
+export async function mapClientProject(clientId, project) {
+  return request('POST', `/v1/clients/${encodeURIComponent(clientId)}/projects`, {
+    body: project,
+  });
+}
+
+export async function mapProjectRepository(clientId, projectId, repo) {
+  return request(
+    'POST',
+    `/v1/clients/${encodeURIComponent(clientId)}/projects/${encodeURIComponent(projectId)}/repositories`,
+    { body: { repo } }
+  );
 }
 
 // --- Projects lookup table ---

@@ -1,7 +1,7 @@
 // Local-first cache of session records.
 //
-// This is the source of truth for "recent" reads in the UI. The backend
-// (BigQuery) remains the durable store; we sync to it but the user-visible
+// This is the source of truth for "recent" reads in the UI. The PostgreSQL
+// backend remains the durable store; we sync to it but the user-visible
 // path goes through this cache so My Time / popup feel instant.
 //
 // Storage layout (chrome.storage.local.sessionCache):
@@ -14,9 +14,17 @@
 // converting to/from the backend wire format):
 //   {
 //     sessionId: string,
-//     repo: string,
+//     source: 'github' | 'manual',
+//     entryType: 'delivery' | 'ops',
+//     clientId: number | null,
+//     client: string | null,
+//     repo: string | null,
+//     reportingProjectId: string | null,
+//     project: string | null,
 //     issueNumber: number,
 //     issueTitle: string | null,
+//     description: string | null,
+//     githubMetadata: object,
 //     issueUrl: string | null,
 //     sourceUrl: string | null,
 //     startedAt: number,           // ms epoch
@@ -50,25 +58,34 @@ async function save(cache) {
 export function fromBackendSession(s) {
   return {
     sessionId: s.session_id,
-    repo: s.repo,
-    issueNumber: s.issue_number,
-    issueTitle: s.issue_title,
+    source: s.source || (s.source_url && s.issue_number > 0 ? 'github' : 'manual'),
+    entryType: s.type || s.entry_type || (s.project_ids?.length ? 'delivery' : 'ops'),
+    clientId: s.client_id ?? null,
+    client: s.client ?? null,
+    repo: s.repo ?? null,
+    reportingProjectId: s.reporting_project_id ?? null,
+    project: s.project ?? null,
+    issueNumber: s.issue_number ?? 0,
+    issueTitle: s.issue_title ?? null,
+    description: s.description ?? s.issue_title ?? null,
+    githubMetadata: s.github_metadata || {},
     issueUrl: s.issue_url,
     sourceUrl: s.source_url,
     startedAt: new Date(s.started_at).getTime(),
     completedAt: new Date(s.completed_at).getTime(),
     durationMs: s.duration_ms,
     durationHours: s.duration_hours,
+    durationHoursExact: s.duration_hours_exact ?? (s.duration_ms / 3_600_000),
+    reportingStatus: s.reporting_status ?? 'pending_metadata',
+    label: s.label ?? null,
     syncedToProject: !!s.synced_to_project,
     projectTitles: s.project_titles || [],
     projectIds: s.project_ids || [],
     taktVersion: s.takt_version,
+    githubUser: s.github_user ?? null,
+    createdByUser: s.created_by_user ?? null,
     syncStatus: 'synced',
     syncedAt: Date.now(),
-    // Soft-delete marker. The backend already omits deleted rows from LIST,
-    // so this is normally null — but carry it through so any reader of the
-    // cache (My Time totals, the Projects-field fallback sum) can exclude a
-    // soft-deleted row even before the next reconcile drops it.
     deletedAt: s.deleted_at ? new Date(s.deleted_at).getTime() : null,
   };
 }
@@ -77,20 +94,29 @@ export function fromBackendSession(s) {
 export function toBackendPayload(r) {
   return {
     session_id: r.sessionId,
-    repo: r.repo,
-    issue_number: r.issueNumber,
+    source: r.source || 'manual',
+    type: r.entryType || 'ops',
+    client_id: r.clientId ?? null,
+    repo: r.repo ?? null,
+    reporting_project_id: r.reportingProjectId ?? null,
+    project: r.project ?? null,
+    issue_number: r.issueNumber ?? 0,
     issue_title: r.issueTitle ?? null,
+    description: r.description ?? r.issueTitle ?? null,
+    github_metadata: r.githubMetadata || {},
     issue_url: r.issueUrl ?? null,
     started_at: new Date(r.startedAt).toISOString(),
     completed_at: new Date(r.completedAt).toISOString(),
     duration_ms: r.durationMs,
     duration_hours: r.durationHours,
+    duration_hours_exact: r.durationHoursExact ?? (r.durationMs / 3_600_000),
     source_url: r.sourceUrl ?? null,
     synced_to_project: !!r.syncedToProject,
     project_titles: r.projectTitles || [],
     project_ids: r.projectIds || [],
     takt_version: r.taktVersion ?? null,
     client_ts: new Date().toISOString(),
+    ...(r.memberLogin ? { member_login: r.memberLogin } : {}),
   };
 }
 
@@ -220,17 +246,29 @@ export async function migrateFromCompletedSessions() {
     if (cache.byId[sessionId]) continue; // already in cache
     cache.byId[sessionId] = {
       sessionId,
-      repo: s.repo,
-      issueNumber: s.issueNumber,
-      issueTitle: s.issueTitle ?? null,
+      source: s.sourceUrl && s.issueNumber > 0 ? 'github' : 'manual',
+      entryType: s.issueNumber > 0 ? 'delivery' : 'ops',
+      clientId: null,
+      client: null,
+      repo: s.issueNumber > 0 ? s.repo : null,
+      reportingProjectId: null,
+      project: null,
+      issueNumber: s.issueNumber > 0 ? s.issueNumber : 0,
+      issueTitle: s.issueNumber > 0 ? (s.issueTitle ?? null) : null,
+      description: s.issueTitle ?? s.categoryTitle ?? s.category ?? s.repo,
+      githubMetadata: {},
       issueUrl: null,
       sourceUrl: s.sourceUrl ?? null,
       startedAt: s.startedAtMs ?? (s.completedAt - s.durationMs),
       completedAt: s.completedAt,
       durationMs: s.durationMs,
       durationHours: Math.round((s.durationMs / 3_600_000) * 4) / 4,
+      durationHoursExact: s.durationMs / 3_600_000,
+      reportingStatus: 'pending_metadata',
+      label: null,
       syncedToProject: false,
       projectTitles: [],
+      projectIds: [],
       taktVersion: null,
       syncStatus: 'pending',
       syncedAt: null,

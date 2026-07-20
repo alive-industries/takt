@@ -15,7 +15,12 @@ class Settings(BaseSettings):
 
     model_config = SettingsConfigDict(env_file=".env", env_prefix="TAKT_", extra="ignore")
 
-    # GCP / BigQuery
+    # PostgreSQL — authoritative transactional store.
+    database_url: str = Field(default="postgresql+psycopg://takt:takt@localhost:55432/takt")
+    db_pool_size: int = Field(default=2, ge=1)
+    db_max_overflow: int = Field(default=3, ge=0)
+
+    # GCP / BigQuery analytics replica
     gcp_project: str = Field(default="cost-tracker-490815")
     bq_dataset: str = Field(default="takt")
     bq_location: str = Field(

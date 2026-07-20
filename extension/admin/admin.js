@@ -10,6 +10,17 @@
   const gateEl = document.getElementById('gate');
   const membersCard = document.getElementById('members-card');
   const configCard = document.getElementById('config-card');
+  const clientsCard = document.getElementById('clients-card');
+  const newClientName = document.getElementById('new-client-name');
+  const btnAddClient = document.getElementById('btn-add-client');
+  const mapClient = document.getElementById('map-client');
+  const mapProject = document.getElementById('map-project');
+  const btnMapProject = document.getElementById('btn-map-project');
+  const mapProjectRepo = document.getElementById('map-project-repo');
+  const mapRepo = document.getElementById('map-repo');
+  const btnMapRepo = document.getElementById('btn-map-repo');
+  const clientStatus = document.getElementById('client-status');
+  const clientsTbody = document.getElementById('clients-tbody');
   const orgLabel = document.getElementById('org-label');
 
   const newLoginInput = document.getElementById('new-login');
@@ -17,6 +28,12 @@
   const btnAdd = document.getElementById('btn-add');
   const addStatus = document.getElementById('add-status');
   const tbody = document.getElementById('members-tbody');
+  const memberModal = document.getElementById('member-modal');
+  const memberModalLogin = document.getElementById('member-modal-login');
+  const memberModalRole = document.getElementById('member-modal-role');
+  const memberModalStatus = document.getElementById('member-modal-status');
+  const memberModalSave = document.getElementById('member-modal-save');
+  let editingMember = null;
 
   const defaultFieldInput = document.getElementById('default-field-input');
   const excludedListEl = document.getElementById('excluded-projects-list');
@@ -28,7 +45,7 @@
   const backLink = document.getElementById('back-link');
   backLink.addEventListener('click', (e) => {
     e.preventDefault();
-    chrome.runtime.openOptionsPage();
+    window.top.location.href = chrome.runtime.getURL('dashboard/dashboard.html#settings');
   });
 
   function send(action, payload = {}) {
@@ -88,43 +105,59 @@
       const statusBadge = `<span class="badge badge--${m.status}">${m.status}</span>`;
       const sourceBadge = `<span class="badge badge--${m.source === 'org' ? 'org' : 'manual'}">${m.source}</span>`;
       tr.innerHTML = `
-        <td><strong>${escapeHtml(m.github_login)}</strong></td>
+        <td><strong title="${escapeHtml(m.github_login)}">${escapeHtml(m.github_login)}</strong></td>
         <td>${roleBadge}</td>
         <td>${statusBadge}</td>
         <td>${sourceBadge}</td>
         <td class="muted">${fmtDate(m.added_at)}</td>
-        <td class="actions-cell">
-          <button class="btn btn--secondary" data-act="toggle-role">${m.role === 'admin' ? 'Make member' : 'Make admin'}</button>
-          <button class="btn btn--secondary" data-act="toggle-status">${m.status === 'active' ? 'Revoke' : 'Reactivate'}</button>
-        </td>
+        <td class="actions-cell"><div class="member-actions">
+          <button class="btn btn--secondary" data-act="edit">Edit</button>
+        </div></td>
       `;
       tbody.appendChild(tr);
     }
   }
 
-  tbody.addEventListener('click', async (ev) => {
-    const btn = ev.target.closest('button[data-act]');
+  function closeMemberModal() {
+    editingMember = null;
+    memberModal.hidden = true;
+  }
+
+  tbody.addEventListener('click', (ev) => {
+    const btn = ev.target.closest('button[data-act="edit"]');
     if (!btn) return;
-    const tr = btn.closest('tr');
-    const login = tr.dataset.login;
-    const action = btn.dataset.act;
+    const login = btn.closest('tr').dataset.login;
+    editingMember = currentMembers.find((member) => member.github_login === login) || null;
+    if (!editingMember) return;
+    memberModalLogin.textContent = editingMember.github_login;
+    memberModalRole.value = editingMember.role;
+    memberModalStatus.value = editingMember.status;
+    memberModal.hidden = false;
+    memberModalRole.focus();
+  });
 
-    btn.disabled = true;
-    const members = currentMembers;
-    const m = members.find((x) => x.github_login === login);
-    if (!m) return;
-
-    const patch = { github_login: login };
-    if (action === 'toggle-role') patch.role = m.role === 'admin' ? 'member' : 'admin';
-    if (action === 'toggle-status') patch.status = m.status === 'active' ? 'revoked' : 'active';
-
-    const resp = await send('ADMIN_UPSERT_MEMBER', patch);
-    if (resp?.ok) {
-      await loadMembers();
-    } else {
+  document.getElementById('member-modal-cancel').addEventListener('click', closeMemberModal);
+  memberModal.addEventListener('click', (event) => {
+    if (event.target === memberModal) closeMemberModal();
+  });
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && !memberModal.hidden) closeMemberModal();
+  });
+  memberModalSave.addEventListener('click', async () => {
+    if (!editingMember) return;
+    memberModalSave.disabled = true;
+    const resp = await send('ADMIN_UPSERT_MEMBER', {
+      github_login: editingMember.github_login,
+      role: memberModalRole.value,
+      status: memberModalStatus.value,
+    });
+    memberModalSave.disabled = false;
+    if (!resp?.ok) {
       alert(`Update failed: ${resp?.error?.message || 'unknown error'}`);
-      btn.disabled = false;
+      return;
     }
+    closeMemberModal();
+    await loadMembers();
   });
 
   let currentMembers = [];
@@ -162,6 +195,101 @@
       showStatus(addStatus, `Error: ${resp?.error?.message || 'failed'}`, 'error');
     }
     btnAdd.disabled = false;
+  });
+
+  // --- Clients ---
+
+  let adminClients = [];
+  let githubProjects = [];
+
+  function renderClientMappings() {
+    mapClient.innerHTML = adminClients
+      .map((client) => `<option value="${client.client_id}">${escapeHtml(client.name)}</option>`)
+      .join('');
+    const mappedProjects = adminClients.flatMap((client) =>
+      (client.projects || []).map((project) => ({ ...project, clientId: client.client_id }))
+    );
+    mapProjectRepo.innerHTML = '<option value="">Select mapped project…</option>' +
+      mappedProjects.map((project) =>
+        `<option value="${project.clientId}|${escapeHtml(project.project_id)}">${escapeHtml(project.title)}</option>`
+      ).join('');
+    clientsTbody.innerHTML = adminClients.map((client) => {
+      const projects = (client.projects || []).map((project) =>
+        `<div><strong>${escapeHtml(project.title)}</strong><div class="muted">${escapeHtml((project.repositories || []).join(', ') || 'No repositories')}</div></div>`
+      ).join('') || '—';
+      return `<tr><td><strong>${escapeHtml(client.name)}</strong></td><td>${projects}</td></tr>`;
+    }).join('');
+  }
+
+  async function loadClients() {
+    const resp = await send('LIST_CLIENTS');
+    if (!resp?.ok) {
+      showStatus(clientStatus, resp?.error?.message || 'Failed to load clients', 'error');
+      return;
+    }
+    adminClients = resp.clients || [];
+    renderClientMappings();
+    const { settings = {} } = await chrome.storage.local.get('settings');
+    if (!settings.pat) return;
+    const projectsResp = await send('FETCH_ALL_PROJECTS', { pat: settings.pat });
+    githubProjects = projectsResp?.projects || [];
+    mapProject.innerHTML = '<option value="">Select GitHub project…</option>' +
+      githubProjects.map((project) =>
+        `<option value="${escapeHtml(project.id)}">${escapeHtml(project.title)}${project.org ? ` · ${escapeHtml(project.org)}` : ''}</option>`
+      ).join('');
+  }
+
+  btnAddClient.addEventListener('click', async () => {
+    const name = newClientName.value.trim();
+    if (!name) return;
+    const resp = await send('ADMIN_CREATE_CLIENT', { name });
+    if (!resp?.ok) {
+      showStatus(clientStatus, resp?.error?.message || 'Failed to create client', 'error');
+      return;
+    }
+    newClientName.value = '';
+    showStatus(clientStatus, 'Client saved', 'success');
+    await loadClients();
+  });
+
+  btnMapProject.addEventListener('click', async () => {
+    const clientId = Number(mapClient.value);
+    const project = githubProjects.find((item) => item.id === mapProject.value);
+    if (!clientId || !project) return;
+    const resp = await send('ADMIN_MAP_CLIENT_PROJECT', {
+      clientId,
+      project: { project_id: project.id, title: project.title, org: project.org || null },
+    });
+    if (!resp?.ok) {
+      showStatus(clientStatus, resp?.error?.message || 'Failed to map project', 'error');
+      return;
+    }
+    showStatus(clientStatus, 'Project mapped to client', 'success');
+    await loadClients();
+  });
+
+  mapProjectRepo.addEventListener('change', async () => {
+    const [, projectId] = mapProjectRepo.value.split('|');
+    if (!projectId) return;
+    mapRepo.innerHTML = '<option value="">Loading repositories…</option>';
+    const resp = await send('FETCH_PROJECT_REPOS', { projectId });
+    mapRepo.innerHTML = '<option value="">Select GitHub repository…</option>' +
+      (resp?.repos || []).map((repo) => `<option value="${escapeHtml(repo)}">${escapeHtml(repo)}</option>`).join('');
+  });
+
+  btnMapRepo.addEventListener('click', async () => {
+    const [clientId, projectId] = mapProjectRepo.value.split('|');
+    const repo = mapRepo.value;
+    if (!clientId || !projectId || !repo) return;
+    const resp = await send('ADMIN_MAP_PROJECT_REPO', {
+      clientId: Number(clientId), projectId, repo,
+    });
+    if (!resp?.ok) {
+      showStatus(clientStatus, resp?.error?.message || 'Failed to map repository', 'error');
+      return;
+    }
+    showStatus(clientStatus, 'Repository mapped to project', 'success');
+    await loadClients();
   });
 
   // --- Org config ---
@@ -286,6 +414,7 @@
     const ok = await checkAccess();
     if (!ok) return;
     membersCard.style.display = '';
+    clientsCard.style.display = 'none';
     configCard.style.display = '';
     await Promise.all([
       loadMembers(),

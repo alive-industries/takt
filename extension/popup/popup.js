@@ -3,7 +3,6 @@
 
   const activeSection = document.getElementById('active-section');
   const sessionsList = document.getElementById('sessions-list');
-  const optionsLink = document.getElementById('options-link');
 
   let currentSession = null;
   let displayInterval = null;
@@ -53,7 +52,7 @@
   function renderActive() {
     if (!currentSession) {
       activeSection.innerHTML =
-        '<div class="active-empty">No active timer. Start one from a GitHub issue page.</div>';
+        '<div class="active-empty">No active timer. Resume recent work below or start from the dashboard.</div>';
       return;
     }
 
@@ -67,10 +66,16 @@
     // email). Show just the title without a phantom #0 prefix.
     const issueLabel = currentSession.issueNumber > 0
       ? `#${currentSession.issueNumber} ${escapeHtml(currentSession.issueTitle || '')}`
-      : escapeHtml(currentSession.issueTitle || 'Untitled');
+      : escapeHtml(currentSession.description || 'Untitled');
+    const baseContext = currentSession.label
+      || currentSession.repo
+      || (currentSession.client ? `${currentSession.client} — ops` : 'unassigned');
+    const contextLabel = currentSession.reportingStatus === 'pending_metadata'
+      ? `Needs reporting details — ${baseContext}`
+      : baseContext;
     activeSection.innerHTML = `
       <div class="active">
-        <div class="active-repo">${escapeHtml(currentSession.repo)}</div>
+        <div class="active-repo">${escapeHtml(contextLabel || '')}</div>
         <div class="active-issue">${issueLabel}</div>
         <div class="active-timer ${timerClass}" id="timer-display">${formatElapsed(elapsed)}</div>
         <div class="active-controls">
@@ -113,22 +118,48 @@
       return;
     }
 
-    sessionsList.innerHTML = sessions
-      .slice(0, 5)
-      .map((s) => {
-        // issueNumber=0 entries (manual / no issue) show the title instead
-        // of a #0 reference — keeps the recent list readable for meetings,
-        // PM, email time.
-        const ref = s.issueNumber > 0
-          ? `${escapeHtml(s.repo)}#${s.issueNumber}`
-          : escapeHtml(s.issueTitle || s.repo);
-        return `
+    const recent = sessions.slice(0, 3);
+    sessionsList.innerHTML = recent.map((session) => {
+      const ref = session.issueNumber > 0
+        ? `${escapeHtml(session.repo)}#${session.issueNumber}`
+        : escapeHtml(session.label || session.description || session.client || 'Needs reporting details');
+      return `
         <li>
-          <span class="session-ref">${ref}</span>
-          <span class="session-duration">${formatDuration(s.durationMs)} &middot; ${formatRelative(s.completedAt)}</span>
+          <div class="session-row">
+            <span class="session-ref">${ref}</span>
+            <button class="btn btn--resume" data-resume="${escapeHtml(session.sessionId)}"${currentSession ? ' disabled' : ''}>Resume</button>
+          </div>
+          <div class="session-duration">${formatDuration(session.durationMs)} &middot; ${formatRelative(session.completedAt)}</div>
         </li>`;
-      })
-      .join('');
+    }).join('');
+    sessionsList.querySelectorAll('[data-resume]').forEach((button) => {
+      button.addEventListener('click', async () => {
+        const session = recent.find((item) => item.sessionId === button.dataset.resume);
+        if (!session || currentSession) return;
+        button.disabled = true;
+        const resp = await sendMessage('START', {
+          source: session.source,
+          entryType: session.entryType,
+          clientId: session.clientId,
+          client: session.client,
+          repo: session.repo,
+          reportingProjectId: session.reportingProjectId,
+          project: session.project,
+          issueNumber: session.issueNumber,
+          issueTitle: session.issueTitle,
+          description: session.description,
+          sourceUrl: session.source === 'github' ? session.sourceUrl : null,
+        });
+        if (resp?.ok) {
+          currentSession = resp.session;
+          renderActive();
+          toggleDisplayTimer();
+          renderSessions(recent);
+        } else {
+          button.disabled = false;
+        }
+      });
+    });
   }
 
   function escapeHtml(str) {
@@ -204,16 +235,8 @@
     refreshSyncStatus();
   }
 
-  // --- Options link ---
-
-  optionsLink.addEventListener('click', (e) => {
-    e.preventDefault();
-    chrome.runtime.openOptionsPage();
-  });
-
-  document.getElementById('mytime-link').addEventListener('click', (e) => {
-    e.preventDefault();
-    chrome.tabs.create({ url: chrome.runtime.getURL('mytime/mytime.html') });
+  document.getElementById('dashboard-link').addEventListener('click', () => {
+    chrome.tabs.create({ url: chrome.runtime.getURL('dashboard/dashboard.html') });
   });
 
   // --- Init ---

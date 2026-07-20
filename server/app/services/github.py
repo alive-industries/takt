@@ -32,10 +32,8 @@ class GitHubClient:
         settings = get_settings()
         self._base = settings.github_api_base
         self._org = settings.github_org
-        self._user_cache: TTLCache[str, GitHubUser] = TTLCache(
-            maxsize=2048, ttl=settings.pat_cache_ttl
-        )
-        self._org_cache: TTLCache[tuple[int, str], bool] = TTLCache(
+        self._user_cache = TTLCache[str, GitHubUser](maxsize=2048, ttl=settings.pat_cache_ttl)
+        self._org_cache = TTLCache[tuple[int, str], bool](
             maxsize=2048, ttl=settings.org_membership_cache_ttl
         )
         self._client = httpx.AsyncClient(timeout=10.0)

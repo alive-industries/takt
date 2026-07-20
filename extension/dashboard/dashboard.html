@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Takt Dashboard</title>
+  <link rel="stylesheet" href="dashboard.css">
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="brand-mark">T</div>
+        <div><strong>Takt</strong><span>Time tracking</span></div>
+      </div>
+      <nav>
+        <button class="nav-item is-active" data-view="time">
+          <span class="nav-icon">◷</span><span>Time</span>
+        </button>
+        <button class="nav-item" data-view="clients" id="clients-nav" hidden>
+          <span class="nav-icon">◫</span><span>Clients</span>
+        </button>
+        <button class="nav-item" data-view="settings">
+          <span class="nav-icon">⚙</span><span>Settings</span>
+        </button>
+        <button class="nav-item" data-view="admin" id="admin-nav" hidden>
+          <span class="nav-icon">◇</span><span>Admin</span>
+        </button>
+      </nav>
+      <div class="sidebar-footer">
+        <span class="status-dot" id="status-dot"></span>
+        <div><strong id="identity">Connecting…</strong><span id="role">Checking backend</span></div>
+      </div>
+    </aside>
+    <main>
+      <header class="topbar">
+        <div><p class="eyebrow">Dashboard</p><h1 id="view-title">Time</h1></div>
+        <div class="sync-pill" id="sync-pill">Checking sync…</div>
+      </header>
+      <section class="workspace">
+        <iframe id="workspace-frame" title="Takt Time" src="../mytime/mytime.html"></iframe>
+        <div class="clients-workspace" id="clients-workspace" hidden>
+          <aside class="clients-panel">
+            <div class="panel-heading">
+              <div><p class="eyebrow">Reporting structure</p><h2>Clients</h2></div>
+              <button class="icon-button" id="new-client-button" title="Create client">＋</button>
+            </div>
+            <form class="new-client-form" id="new-client-form" hidden>
+              <label for="new-client-name">Client name</label>
+              <div class="inline-form"><input id="new-client-name" autocomplete="off" placeholder="e.g. Beagle"><button type="submit">Create</button></div>
+            </form>
+            <div class="client-list" id="client-list"></div>
+          </aside>
+          <section class="client-detail" id="client-detail">
+            <div class="empty-detail">
+              <div class="empty-icon">◫</div>
+              <h2>Select a client</h2>
+              <p>Choose a client to manage its GitHub projects and repository mappings.</p>
+            </div>
+          </section>
+        </div>
+      </section>
+      <div class="toast" id="dashboard-toast" hidden></div>
+    </main>
+  </div>
+  <script src="dashboard.js"></script>
+</body>
+</html>

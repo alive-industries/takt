@@ -116,3 +116,73 @@ PARTITION BY DATE(ts)
 OPTIONS(
   description = "Append-only audit trail of admin actions."
 );
+
+-- ============================================================================
+-- session_facts: hourly PostgreSQL analytics replica
+-- ============================================================================
+CREATE TABLE IF NOT EXISTS `__TAKT_DS__.session_facts` (
+  session_id        STRING NOT NULL,
+  github_user       STRING NOT NULL,
+  github_user_id    INT64,
+  created_by_user   STRING NOT NULL,
+  source            STRING NOT NULL,
+  entry_type        STRING NOT NULL,
+  reporting_status  STRING NOT NULL,
+  client_id         INT64,
+  client            STRING,
+  reporting_project_id STRING,
+  project           STRING,
+  description       STRING,
+  label             STRING,
+  github_metadata   JSON,
+  context_type      STRING,
+  repo              STRING,
+  issue_number      INT64 NOT NULL,
+  issue_title       STRING,
+  issue_url         STRING,
+  category          STRING,
+  category_title    STRING,
+  started_at        TIMESTAMP NOT NULL,
+  completed_at      TIMESTAMP NOT NULL,
+  duration_ms       INT64 NOT NULL,
+  duration_hours_exact FLOAT64 NOT NULL,
+  duration_hours    FLOAT64 NOT NULL,
+  source_url        STRING,
+  synced_to_project BOOL,
+  project_titles    ARRAY<STRING>,
+  project_ids       ARRAY<STRING>,
+  takt_version      STRING,
+  client_ts         TIMESTAMP,
+  inserted_at       TIMESTAMP NOT NULL,
+  updated_at        TIMESTAMP NOT NULL,
+  deleted_at        TIMESTAMP,
+  replicated_at     TIMESTAMP NOT NULL
+)
+PARTITION BY DATE(completed_at)
+CLUSTER BY github_user, entry_type, client, repo
+OPTIONS(
+  description = "Hourly analytics replica sourced transactionally from PostgreSQL."
+);
+
+CREATE OR REPLACE VIEW `__TAKT_DS__.time_tracking` AS
+SELECT
+  CASE
+    WHEN source = 'github' THEN 'github_timer'
+    WHEN entry_type = 'delivery' THEN 'manual_delivery'
+    ELSE 'manual_ops'
+  END AS route,
+  source,
+  entry_type AS type,
+  github_user AS user,
+  client,
+  IF(entry_type = 'ops', NULL, repo) AS repo,
+  project,
+  IF(issue_number > 0, issue_number, NULL) AS issue,
+  description,
+  duration_hours_exact AS hours,
+  duration_hours AS hours_rounded,
+  label,
+  github_metadata
+FROM `__TAKT_DS__.session_facts`
+WHERE deleted_at IS NULL
+  AND reporting_status = 'complete';
