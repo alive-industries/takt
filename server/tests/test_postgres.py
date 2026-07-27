@@ -60,6 +60,17 @@ def client():
     app.dependency_overrides.clear()
 
 
+def test_bigquery_sync_status_is_disabled_when_no_events(client: TestClient) -> None:
+    suffix = uuid4().hex
+    caller = _caller(f"sync-{suffix}", int(suffix[:10], 16), "admin")
+    app.dependency_overrides[get_caller] = lambda: caller
+    response = client.get("/v1/sync/bigquery")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["pending"] >= 0
+    assert body["all_synced"] is (body["pending"] == 0)
+
+
 def test_manual_ops_is_idempotent_and_outboxed(client: TestClient) -> None:
     suffix = uuid4().hex
     caller = _caller(f"member-{suffix}", int(suffix[:10], 16))

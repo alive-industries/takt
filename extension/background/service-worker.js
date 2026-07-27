@@ -23,6 +23,8 @@ import {
   getOrgConfig as getBackendOrgConfig,
   putOrgConfig as putBackendOrgConfig,
   getSessionTotals,
+  getBigQuerySyncStatus,
+  pushBigQuery,
   listClients as listBackendClients,
   createClient as createBackendClient,
   mapClientProject as mapBackendClientProject,
@@ -804,6 +806,22 @@ async function handleMessage({ action, payload }) {
       try {
         const me = await getBackendMe();
         return { ok: true, me };
+      } catch (err) {
+        return { ok: false, error: { code: err.code, message: err.message, status: err.status } };
+      }
+    }
+
+    case 'GET_BIGQUERY_SYNC_STATUS': {
+      try {
+        return { ok: true, status: await getBigQuerySyncStatus() };
+      } catch (err) {
+        return { ok: false, error: { code: err.code, message: err.message, status: err.status } };
+      }
+    }
+
+    case 'PUSH_BIGQUERY': {
+      try {
+        return { ok: true, result: await pushBigQuery() };
       } catch (err) {
         return { ok: false, error: { code: err.code, message: err.message, status: err.status } };
       }

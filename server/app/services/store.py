@@ -24,6 +24,7 @@ from app.db_models import (
 )
 from app.errors import AdminRequired, NotAuthorised
 from app.models import (
+    BigQuerySyncStatus,
     Client,
     ClientProject,
     Member,
@@ -142,6 +143,58 @@ def _outbox(db, aggregate_id: str, event_type: str, payload: dict) -> None:
             created_at=_now(),
         )
     )
+
+
+def get_bigquery_sync_status() -> BigQuerySyncStatus:
+    with transaction() as db:
+        pending = (
+            db.scalar(
+                select(func.count())
+                .select_from(OutboxEventRow)
+                .where(OutboxEventRow.exported_at.is_(None))
+            )
+            or 0
+        )
+        incomplete = (
+            db.scalar(
+                select(func.count())
+                .select_from(SessionRow)
+                .where(
+                    SessionRow.deleted_at.is_(None),
+                    SessionRow.reporting_status == "pending_metadata",
+                )
+            )
+            or 0
+        )
+        failed = (
+            db.scalar(
+                select(func.count())
+                .select_from(OutboxEventRow)
+                .where(
+                    OutboxEventRow.exported_at.is_(None),
+                    OutboxEventRow.attempts > 0,
+                )
+            )
+            or 0
+        )
+        last_exported_at = db.scalar(select(func.max(OutboxEventRow.exported_at)))
+        last_failed = db.scalar(
+            select(OutboxEventRow)
+            .where(
+                OutboxEventRow.exported_at.is_(None),
+                OutboxEventRow.last_error.is_not(None),
+            )
+            .order_by(OutboxEventRow.id.desc())
+            .limit(1)
+        )
+        return BigQuerySyncStatus(
+            all_synced=pending == 0 and incomplete == 0,
+            pending=pending,
+            incomplete=incomplete,
+            failed=failed,
+            last_exported_at=last_exported_at,
+            last_error=last_failed.last_error if last_failed else None,
+        )
 
 
 def get_member(login: str, github_user_id: int | None = None) -> Member | None:

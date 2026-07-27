@@ -142,6 +142,22 @@ class SessionUpdate(BaseModel):
     description: str | None = None
 
 
+# --- BigQuery sync ---
+
+
+class BigQuerySyncStatus(BaseModel):
+    all_synced: bool
+    pending: int
+    incomplete: int
+    failed: int
+    last_exported_at: datetime | None = None
+    last_error: str | None = None
+
+
+class BigQuerySyncResult(BigQuerySyncStatus):
+    exported: int = 0
+
+
 # --- Clients ---
 
 

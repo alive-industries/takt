@@ -12,7 +12,7 @@ from fastapi.responses import JSONResponse
 
 from app.config import get_settings
 from app.db import reset_db
-from app.routes import admin, clients, me, projects, sessions
+from app.routes import admin, clients, me, projects, sessions, sync
 from app.services.github import get_github_client, reset_github_client
 
 
@@ -99,6 +99,7 @@ def create_app() -> FastAPI:
     app.include_router(me.router)
     app.include_router(clients.router)
     app.include_router(sessions.router)
+    app.include_router(sync.router)
     app.include_router(projects.router)
     app.include_router(admin.router)
 

@@ -222,8 +222,16 @@
         const repoIsGh = isGithubRepo(s.repo);
         const hasIssue = s.issueNumber > 0;
         const projectLabel = s.entryType === 'ops' ? 'Ops' : (s.project || 'Needs project details');
+        const clientOptions = reportingClients
+          .map((client) => `<option value="${client.client_id}">${escapeHtml(client.name)}</option>`)
+          .join('');
+        const opsClientFix = s.reportingStatus === 'pending_metadata'
+          && s.entryType === 'ops'
+          && reportingClients.length
+          ? `<div class="reporting-fix"><select data-client-fix><option value="">Select client…</option>${clientOptions}</select><button data-save-client>Save</button></div>`
+          : '';
         const projectStatus = s.reportingStatus === 'pending_metadata'
-          ? `<div class="muted">Needs reporting details</div>`
+          ? `<div class="muted">Needs reporting details</div>${opsClientFix}`
           : '';
         const repositoryContext = repoIsGh
           ? `<div class="muted"><a href="https://github.com/${escapeHtml(s.repo)}" target="_blank">${escapeHtml(s.repo)}</a></div>`
@@ -266,6 +274,26 @@
       btn.addEventListener('click', (e) => {
         const tr = e.currentTarget.closest('tr');
         deleteRow(tr);
+      });
+    });
+
+    sessionsBody.querySelectorAll('[data-save-client]').forEach((button) => {
+      button.addEventListener('click', async () => {
+        const row = button.closest('tr');
+        const clientId = Number(row.querySelector('[data-client-fix]').value);
+        if (!clientId) return;
+        button.disabled = true;
+        const response = await sendMessage('UPDATE_BACKEND_SESSION', {
+          sessionId: row.dataset.sid,
+          patch: { client_id: clientId },
+          backendOnly: !!filterUser?.value,
+        });
+        if (!response?.ok) {
+          button.disabled = false;
+          setSourcePip('error', response?.error?.message || 'Failed to assign client');
+          return;
+        }
+        await refresh();
       });
     });
 

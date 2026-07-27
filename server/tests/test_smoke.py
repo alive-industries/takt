@@ -44,6 +44,7 @@ def test_openapi_schema_loads() -> None:
         assert "/v1/clients" in paths
         assert "/v1/clients/{client_id}/projects" in paths
         assert "/v1/clients/{client_id}/projects/{project_id}/repositories" in paths
+        assert "/v1/sync/bigquery" in paths
 
 
 def test_session_update_requires_auth() -> None:

@@ -12,6 +12,10 @@
   const title = document.getElementById('view-title');
   const clientsNav = document.getElementById('clients-nav');
   const adminNav = document.getElementById('admin-nav');
+  const bqStatus = document.getElementById('bq-status');
+  const bqStatusTitle = document.getElementById('bq-status-title');
+  const bqStatusDetail = document.getElementById('bq-status-detail');
+  const bqSyncButton = document.getElementById('bq-sync-button');
   const clientList = document.getElementById('client-list');
   const clientDetail = document.getElementById('client-detail');
   const newClientForm = document.getElementById('new-client-form');
@@ -37,6 +41,41 @@
     element.hidden = false;
     clearTimeout(toast.timer);
     toast.timer = setTimeout(() => { element.hidden = true; }, 3200);
+  }
+
+  function formatSyncTime(value) {
+    if (!value) return 'No exports yet';
+    return `Last pushed ${new Date(value).toLocaleString([], {
+      dateStyle: 'medium', timeStyle: 'short',
+    })}`;
+  }
+
+  async function loadBigQueryStatus() {
+    const response = await send('GET_BIGQUERY_SYNC_STATUS');
+    bqStatus.hidden = false;
+    if (!response?.ok) {
+      bqStatusTitle.textContent = 'BigQuery status unavailable';
+      bqStatusDetail.textContent = response?.error?.message || 'Could not reach backend';
+      bqSyncButton.disabled = true;
+      return;
+    }
+    const status = response.status;
+    if (status.incomplete) {
+      bqStatusTitle.textContent = `${status.incomplete} record${status.incomplete === 1 ? '' : 's'} need reporting details`;
+    } else if (status.pending) {
+      bqStatusTitle.textContent = `${status.pending} BigQuery change${status.pending === 1 ? '' : 's'} pending`;
+    } else {
+      bqStatusTitle.textContent = 'BigQuery synced';
+    }
+    bqStatusDetail.textContent = status.failed
+      ? `${status.failed} failed · ${status.last_error || 'Retry required'}`
+      : (status.incomplete && !status.pending
+        ? 'Complete those records before pushing'
+        : formatSyncTime(status.last_exported_at));
+    bqSyncButton.textContent = status.pending
+      ? 'Push to BigQuery'
+      : (status.incomplete ? 'Complete details first' : 'BigQuery synced');
+    bqSyncButton.disabled = status.pending === 0;
   }
 
   function selectedClient() {
@@ -203,6 +242,7 @@
       document.getElementById('role').textContent = currentUser.role;
       adminNav.hidden = currentUser.role !== 'admin';
       clientsNav.hidden = currentUser.role !== 'admin';
+      bqSyncButton.hidden = currentUser.role !== 'admin';
     }
     const online = !!ping?.ok;
     document.getElementById('status-dot').style.background = online ? '#42c88a' : '#ef6b73';
@@ -210,7 +250,22 @@
     document.getElementById('sync-pill').textContent = online
       ? (pending ? `${pending} pending` : 'All changes synced') : 'Working offline';
     showView(window.location.hash.slice(1) || 'time');
+    await loadBigQueryStatus();
+    setInterval(loadBigQueryStatus, 15000);
   }
+
+  bqSyncButton.addEventListener('click', async () => {
+    if (bqSyncButton.disabled) return;
+    bqSyncButton.disabled = true;
+    bqSyncButton.textContent = 'Pushing…';
+    const response = await send('PUSH_BIGQUERY');
+    if (!response?.ok) {
+      toast(response?.error?.message || 'BigQuery push failed');
+    } else {
+      toast(`Pushed ${response.result.exported} change${response.result.exported === 1 ? '' : 's'} to BigQuery`);
+    }
+    await loadBigQueryStatus();
+  });
 
   document.querySelectorAll('.nav-item').forEach((item) => {
     item.addEventListener('click', () => showView(item.dataset.view));

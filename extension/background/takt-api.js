@@ -122,6 +122,16 @@ export async function putOrgConfig(config) {
   return request('PUT', '/v1/config', { body: config });
 }
 
+// --- BigQuery sync ---
+
+export async function getBigQuerySyncStatus() {
+  return request('GET', '/v1/sync/bigquery');
+}
+
+export async function pushBigQuery() {
+  return request('POST', '/v1/sync/bigquery');
+}
+
 // --- Clients and repository mappings ---
 
 export async function listClients() {

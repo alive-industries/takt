@@ -35,7 +35,14 @@
     <main>
       <header class="topbar">
         <div><p class="eyebrow">Dashboard</p><h1 id="view-title">Time</h1></div>
-        <div class="sync-pill" id="sync-pill">Checking sync…</div>
+        <div class="topbar-actions">
+          <div class="bq-status" id="bq-status" hidden>
+            <strong id="bq-status-title">Checking BigQuery…</strong>
+            <span id="bq-status-detail"></span>
+          </div>
+          <button class="bq-sync-button" id="bq-sync-button" hidden disabled>Push to BigQuery</button>
+          <div class="sync-pill" id="sync-pill">Checking sync…</div>
+        </div>
       </header>
       <section class="workspace">
         <iframe id="workspace-frame" title="Takt Time" src="../mytime/mytime.html"></iframe>
