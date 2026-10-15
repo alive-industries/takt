@@ -54,6 +54,15 @@ async function save(cache) {
   await chrome.storage.local.set({ [KEY]: cache });
 }
 
+function dateFilterMs(value, exclusiveEnd = false) {
+  if (typeof value === 'number') return value;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    const [year, month, day] = value.split('-').map(Number);
+    return new Date(year, month - 1, day + Number(exclusiveEnd)).getTime();
+  }
+  return new Date(value).getTime();
+}
+
 // --- Conversions ---
 
 // Server snake_case -> normalised. Used when ingesting LIST/UPDATE responses.
@@ -179,12 +188,12 @@ export async function listSessions({ from, to, repo, limit = 1000 } = {}) {
   const cache = await load();
   let arr = Object.values(cache.byId).filter((s) => !s.deletedAt);
 
-  if (from) {
-    const fromMs = typeof from === 'number' ? from : new Date(from).getTime();
+  if (from != null && from !== '') {
+    const fromMs = dateFilterMs(from);
     arr = arr.filter((s) => s.completedAt >= fromMs);
   }
-  if (to) {
-    const toMs = typeof to === 'number' ? to : new Date(to).getTime() + 86_400_000;
+  if (to != null && to !== '') {
+    const toMs = dateFilterMs(to, true);
     arr = arr.filter((s) => s.completedAt < toMs);
   }
   if (repo) arr = arr.filter((s) => s.repo === repo);
@@ -207,10 +216,8 @@ export async function listSessions({ from, to, repo, limit = 1000 } = {}) {
 export async function reconcileWindow({ from, to, records }) {
   return withLock('sessionCache', async () => {
     const cache = await load();
-    const fromMs = from ? (typeof from === 'number' ? from : new Date(from).getTime()) : 0;
-    const toMs = to
-      ? (typeof to === 'number' ? to : new Date(to).getTime() + 86_400_000)
-      : Number.MAX_SAFE_INTEGER;
+    const fromMs = from == null || from === '' ? 0 : dateFilterMs(from);
+    const toMs = to == null || to === '' ? Number.MAX_SAFE_INTEGER : dateFilterMs(to, true);
 
     const serverIds = new Set();
     for (const r of records || []) {

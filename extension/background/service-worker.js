@@ -739,7 +739,13 @@ async function handleMessage({ action, payload }) {
       // older than the cache's 30-day retention — reconciling would write
       // those rows in then immediately prune them on save.
       try {
-        const { skipReconcile, backendOnly = false, ...apiParams } = payload || {};
+        const {
+          skipReconcile,
+          backendOnly = false,
+          reconcileFrom,
+          reconcileTo,
+          ...apiParams
+        } = payload || {};
         const sessions = await listBackendSessions(apiParams);
         const records = sessions.map(cache.fromBackendSession);
         // An admin viewing another member is a backend-only operation. Never
@@ -747,8 +753,8 @@ async function handleMessage({ action, payload }) {
         // popup totals and later "My Time" reads would leak across users.
         if (!skipReconcile && !backendOnly) {
           await cache.reconcileWindow({
-            from: apiParams.from,
-            to: apiParams.to,
+            from: reconcileFrom ?? apiParams.from,
+            to: reconcileTo ?? apiParams.to,
             records,
           });
         }

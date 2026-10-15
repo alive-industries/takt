@@ -58,10 +58,6 @@
     return d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
   }
 
-  function formatDateISO(timestamp) {
-    return new Date(timestamp).toISOString().slice(0, 10);
-  }
-
   function sendMessage(action, payload = {}) {
     return chrome.runtime.sendMessage({ action, payload });
   }
@@ -118,8 +114,8 @@
   // --- Loading sessions: local-first stale-while-revalidate ---
 
   function activeRange() {
-    const from = filterFrom.value || formatDateISO(startOfThisMonth());
-    const to = filterTo.value || formatDateISO(endOfThisMonth());
+    const from = filterFrom.value || self.TaktTime.localDateKey(startOfThisMonth().getTime());
+    const to = filterTo.value || self.TaktTime.localDateKey(endOfThisMonth().getTime());
     return { from, to };
   }
 
@@ -127,7 +123,7 @@
     // Cache holds last RETENTION_DAYS. If the filter "from" is older than
     // that, we can't serve fully from cache — must hit backend.
     const cutoff = Date.now() - RETENTION_DAYS * 86_400_000;
-    const fromMs = new Date(from).getTime();
+    const fromMs = self.TaktTime.localDayStartMs(from);
     return fromMs >= cutoff;
   }
 
@@ -136,8 +132,8 @@
   async function loadFromCache() {
     const { from, to } = activeRange();
     const resp = await sendMessage('LIST_LOCAL_SESSIONS', {
-      from: `${from}T00:00:00Z`,
-      to: `${to}T23:59:59Z`,
+      from: self.TaktTime.localDayStartMs(from),
+      to: self.TaktTime.localDayEndExclusiveMs(to),
     });
     allSessions = resp?.sessions || [];
     return resp;
@@ -153,9 +149,13 @@
   // from the response payload instead of going through the cache.
   async function revalidateFromBackend({ outOfCache = false } = {}) {
     const { from, to } = activeRange();
+    const fromMs = self.TaktTime.localDayStartMs(from);
+    const toMs = self.TaktTime.localDayEndExclusiveMs(to);
     const params = {
-      from: `${from}T00:00:00Z`,
-      to: `${to}T23:59:59Z`,
+      from: new Date(fromMs).toISOString(),
+      to: new Date(toMs).toISOString(),
+      reconcileFrom: fromMs,
+      reconcileTo: toMs,
       skipReconcile: outOfCache,
       backendOnly: !!filterUser?.value,
       // Admin LIST without ?user means "all users" on the backend. Always
@@ -420,7 +420,7 @@
 
     const headers = ['Date', 'Type', 'Client', 'Repo', 'Project', 'Issue #', 'Description', 'Duration', 'Hours'];
     const rows = sessions.map((s) => [
-      formatDateISO(s.completedAt),
+      self.TaktTime.localDateKey(s.completedAt),
       s.entryType,
       s.client || '',
       s.repo || '',
@@ -461,8 +461,12 @@
   }
 
   function setDefaultDateRange() {
-    if (!filterFrom.value) filterFrom.value = formatDateISO(startOfThisMonth());
-    if (!filterTo.value) filterTo.value = formatDateISO(endOfThisMonth());
+    if (!filterFrom.value) {
+      filterFrom.value = self.TaktTime.localDateKey(startOfThisMonth().getTime());
+    }
+    if (!filterTo.value) {
+      filterTo.value = self.TaktTime.localDateKey(endOfThisMonth().getTime());
+    }
   }
 
   // Stale-while-revalidate. Render from cache first (instant), then kick
@@ -859,7 +863,7 @@
 
   async function openAddModal() {
     addErrorEl.textContent = '';
-    addDateInput.value = formatDateISO(Date.now());
+    addDateInput.value = self.TaktTime.localDateKey(Date.now());
     addModeSelect.value = 'delivery';
     populateClientSelect();
     updateAddMode();
@@ -939,8 +943,9 @@
     }
     const dateStr = addDateInput.value;
     if (!dateStr) return { ok: false, error: 'Date is required.' };
-    const completedAt = new Date(`${dateStr}T17:00:00`).getTime();
-    if (!Number.isFinite(completedAt)) return { ok: false, error: 'Invalid date.' };
+    const suggestedCompletedAt = new Date(`${dateStr}T17:00:00`).getTime();
+    if (!Number.isFinite(suggestedCompletedAt)) return { ok: false, error: 'Invalid date.' };
+    const completedAt = Math.min(suggestedCompletedAt, Date.now());
     return { ...result, completedAt, durationMs };
   }
 
