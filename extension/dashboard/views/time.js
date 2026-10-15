@@ -35,6 +35,13 @@
   const RETENTION_DAYS = 30;
   const { escapeHtml, escapeAttribute } = self.TaktUI;
   const toHours = self.TaktTime.roundQuarterHours;
+  const actionStrips = document.getElementById('action-strips');
+  const calloutFailed = document.getElementById('callout-failed');
+  const calloutFailedTitle = document.getElementById('callout-failed-title');
+  const calloutFailedDetail = document.getElementById('callout-failed-detail');
+  const calloutFailedRetry = document.getElementById('callout-failed-retry');
+  const calloutDetails = document.getElementById('callout-details');
+  const calloutDetailsTitle = document.getElementById('callout-details-title');
 
   // --- Helpers ---
 
@@ -280,7 +287,34 @@
     sessionsBody.querySelectorAll('.duration-editable').forEach((td) => {
       td.addEventListener('click', () => startDurationEdit(td));
     });
+    refreshActionStrips();
   }
+
+  // --- Action strips ---
+
+  const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
+
+  async function refreshActionStrips() {
+    const needsDetails = allSessions.filter((s) => s.reportingStatus === 'pending_metadata').length;
+    calloutDetails.hidden = needsDetails === 0;
+    calloutDetailsTitle.textContent = `${plural(needsDetails, 'entry needs', 'entries need')} reporting details`;
+
+    const queue = await sendMessage('QUEUE_STATUS').catch(() => null);
+    const failed = queue?.failed || [];
+    calloutFailed.hidden = failed.length === 0;
+    calloutFailedTitle.textContent = `${plural(failed.length, 'entry', 'entries')} failed to sync`;
+    const firstError = failed[0]?.lastError;
+    calloutFailedDetail.textContent = firstError?.message || (firstError ? String(firstError) : '');
+    calloutFailedRetry.disabled = false;
+
+    actionStrips.hidden = calloutFailed.hidden && calloutDetails.hidden;
+  }
+
+  calloutFailedRetry.addEventListener('click', async () => {
+    calloutFailedRetry.disabled = true;
+    await sendMessage('RETRY_FAILED').catch(() => null);
+    await refresh();
+  });
 
   // --- Inline duration edit ---
 

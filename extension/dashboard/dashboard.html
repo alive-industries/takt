@@ -47,6 +47,21 @@
       </header>
       <section class="workspace">
         <section class="view" id="view-time" hidden>
+          <div class="action-strips" id="action-strips" hidden>
+            <div class="callout callout--error" id="callout-failed" hidden>
+              <div class="callout-body">
+                <strong id="callout-failed-title"></strong>
+                <span class="muted" id="callout-failed-detail"></span>
+              </div>
+              <button class="btn btn--sm btn--danger" id="callout-failed-retry">Retry sync</button>
+            </div>
+            <div class="callout callout--warn" id="callout-details" hidden>
+              <div class="callout-body">
+                <strong id="callout-details-title"></strong>
+                <span class="muted">Pick a client or project in the rows marked "Needs reporting details" below.</span>
+              </div>
+            </div>
+          </div>
           <div class="toolbar view-toolbar">
             <span id="source-pip" class="source-pip"><span class="dot"></span><span id="source-pip-text">loading…</span></span>
             <button class="btn btn--primary" id="btn-add">

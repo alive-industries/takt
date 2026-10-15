@@ -44,6 +44,7 @@ main { display: flex; flex-direction: column; min-width: 0; height: 100vh; }
 .view-toolbar > .btn:first-of-type { margin-left: auto; }
 
 /* Time view */
+.action-strips { display: grid; gap: 10px; }
 .source-pip { display: inline-flex; align-items: center; gap: 6px; color: var(--gray-dark); font-size: 12px; font-weight: 500; }
 .source-pip .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--border-strong); }
 .source-pip--backend .dot { background: var(--teal); }
