@@ -409,3 +409,26 @@ def test_owner_update_delete_and_issue_total(client: TestClient) -> None:
     deleted = client.delete(f"/v1/sessions/{session_id}")
     assert deleted.status_code == 204
     assert client.get(f"/v1/sessions/totals?repo={repo}&issue=42").json()["total_hours"] == 0
+
+
+def test_issue_total_matches_repository_case_insensitively(client: TestClient) -> None:
+    suffix = uuid4().hex
+    caller = _caller(f"member-{suffix}", int(suffix[:10], 16))
+    app.dependency_overrides[get_caller] = lambda: caller
+    session_id = str(uuid4())
+    repo = "Org/Repo"
+    created = client.post(
+        "/v1/sessions",
+        json=_payload(
+            session_id,
+            repo=repo,
+            issue_number=1,
+            issue_url=f"https://github.com/{repo}/issues/1",
+        ),
+    )
+    assert created.status_code == 201
+
+    totals = client.get("/v1/sessions/totals?repo=org/repo&issue=1")
+
+    assert totals.status_code == 200
+    assert totals.json()["total_hours"] == 1

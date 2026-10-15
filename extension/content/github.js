@@ -181,11 +181,20 @@
       // "Timer already active" notice (a disabled button swallows clicks,
       // leaving only the hover title tooltip). data-action="BLOCKED" routes
       // to the notice without sending a START the backend would reject.
-      container.innerHTML = `
-        <button class="takt-btn takt-btn--blocked" data-action="BLOCKED" title="Timer active on ${currentSession.issueNumber > 0 ? `${currentSession.repo}#${currentSession.issueNumber}` : (currentSession.description || currentSession.client || 'another task')}">
-          <span>\u25B6</span> Track time
-        </button>
-      `;
+      const hasIssue = currentSession.issueNumber > 0 && currentSession.repo;
+      const ref = hasIssue
+        ? `${currentSession.repo}#${currentSession.issueNumber}`
+        : (currentSession.description || currentSession.client || 'another task');
+      const button = document.createElement('button');
+      button.className = 'takt-btn takt-btn--blocked';
+      button.dataset.action = 'BLOCKED';
+      button.title = hasIssue
+        ? `Timer active on ${ref}. Click to open that issue in a new tab.`
+        : `Timer active on ${ref}. Click to open the Takt dashboard.`;
+      const icon = document.createElement('span');
+      icon.textContent = '\u25B6';
+      button.append(icon, document.createTextNode(' Track time'));
+      container.replaceChildren(button);
       return;
     }
 
@@ -201,15 +210,24 @@
       const icon = isRunning ? '\u23F8' : '\u25B6';
       const label = isRunning ? '' : 'Resume ';
 
-      container.innerHTML = `
-        <button class="takt-btn ${stateClass}" data-action="${isRunning ? 'PAUSE' : 'RESUME'}">
-          <span>${icon}</span>
-          <span class="takt-timer">${label}${formatElapsed(elapsed)}</span>
-        </button>
-        <button class="takt-stop-btn" data-action="STOP" title="Stop timer">
-          <span>\u25A0</span>
-        </button>
-      `;
+      const button = document.createElement('button');
+      button.className = `takt-btn ${stateClass}`;
+      button.dataset.action = isRunning ? 'PAUSE' : 'RESUME';
+      const iconNode = document.createElement('span');
+      iconNode.textContent = icon;
+      const timer = document.createElement('span');
+      timer.className = 'takt-timer';
+      timer.textContent = `${label}${formatElapsed(elapsed)}`;
+      button.append(iconNode, timer);
+
+      const stopButton = document.createElement('button');
+      stopButton.className = 'takt-stop-btn';
+      stopButton.dataset.action = 'STOP';
+      stopButton.title = 'Stop timer';
+      const stopIcon = document.createElement('span');
+      stopIcon.textContent = '\u25A0';
+      stopButton.appendChild(stopIcon);
+      container.replaceChildren(button, stopButton);
       return;
     }
 
@@ -262,6 +280,18 @@
     });
   }
 
+  function showActionFailure(container, action, response) {
+    const error = response?.error;
+    const message = typeof error === 'string' ? error : error?.message;
+    const text = message || `Could not ${action.toLowerCase()} timer.`;
+    showStatusMessage(
+      container,
+      text,
+      text.includes('Timer already active') ? 'warning' : 'error',
+      6000
+    );
+  }
+
   function cleanup() {
     stopDisplayTimer();
     observer?.disconnect();
@@ -271,17 +301,14 @@
 
   // --- Click handling ---
 
-  function handleClick(container, issue, action) {
+  function handleClick(container, issue, action, button) {
     switch (action) {
       case 'BLOCKED': {
-        // A timer is already running on another issue. Show the same notice
-        // the hover tooltip carries, so a click isn't silent.
-        const ref = currentSession
-          ? (currentSession.issueNumber > 0
-            ? `${currentSession.repo}#${currentSession.issueNumber}`
-            : (currentSession.description || currentSession.client || 'another task'))
-          : 'another task';
-        showStatusMessage(container, `Timer already active on ${ref}`, 'warning', 6000);
+        const hasIssue = currentSession?.issueNumber > 0 && currentSession.repo;
+        const url = hasIssue
+          ? `https://github.com/${currentSession.repo}/issues/${currentSession.issueNumber}`
+          : chrome.runtime.getURL('dashboard/dashboard.html');
+        window.open(url, '_blank', 'noopener');
         break;
       }
       case 'START': {
@@ -289,6 +316,7 @@
           document.querySelector('[data-testid="issue-title"]')?.textContent?.trim() ||
           document.querySelector('.markdown-title')?.textContent?.trim() ||
           `Issue #${issue.issueNumber}`;
+        button.disabled = true;
         sendMessage('START', {
           repo: issue.repo,
           issueNumber: issue.issueNumber,
@@ -299,35 +327,60 @@
             currentSession = resp.session;
             renderContainer(container, issue);
             startDisplayTimer(container);
-          } else if (resp?.error) {
-            // Backend rejects a second concurrent timer (one active session
-            // at a time). Surface the "Timer already active on …" message
-            // instead of letting the click do nothing.
-            showStatusMessage(container, resp.error, 'warning', 6000);
+          } else {
+            showActionFailure(container, 'START', resp);
           }
+        }).finally(() => {
+          if (button.isConnected) button.disabled = false;
         });
         break;
       }
-      case 'PAUSE':
+      case 'PAUSE': {
+        button.disabled = true;
         sendMessage('PAUSE').then((resp) => {
-          if (resp?.ok) { currentSession = resp.session; renderContainer(container, issue); stopDisplayTimer(); }
+          if (resp?.ok) {
+            currentSession = resp.session;
+            renderContainer(container, issue);
+            stopDisplayTimer();
+          } else {
+            showActionFailure(container, 'PAUSE', resp);
+          }
+        }).finally(() => {
+          if (button.isConnected) button.disabled = false;
         });
         break;
-      case 'RESUME':
+      }
+      case 'RESUME': {
+        button.disabled = true;
         sendMessage('RESUME').then((resp) => {
-          if (resp?.ok) { currentSession = resp.session; renderContainer(container, issue); startDisplayTimer(container); }
+          if (resp?.ok) {
+            currentSession = resp.session;
+            renderContainer(container, issue);
+            startDisplayTimer(container);
+          } else {
+            showActionFailure(container, 'RESUME', resp);
+          }
+        }).finally(() => {
+          if (button.isConnected) button.disabled = false;
         });
         break;
-      case 'STOP':
+      }
+      case 'STOP': {
+        button.disabled = true;
         sendMessage('STOP').then((resp) => {
           if (resp?.ok) {
             currentSession = null;
             stopDisplayTimer();
             renderContainer(container, issue);
             showSyncStatus(container, resp.syncResult);
+          } else {
+            showActionFailure(container, 'STOP', resp);
           }
+        }).finally(() => {
+          if (button.isConnected) button.disabled = false;
         });
         break;
+      }
     }
   }
 
@@ -355,7 +408,7 @@
     if (timerEl) {
       timerEl.replaceWith(input);
     } else {
-      btn.innerHTML = '';
+      btn.replaceChildren();
       btn.appendChild(input);
     }
 
@@ -370,12 +423,15 @@
       committed = true;
       const ms = handle.getMs();
       if (ms !== null) {
+        btn.disabled = true;
         sendMessage('SET_TIME', { ms }).then((resp) => {
-          if (resp?.ok) {
+          const failed = !resp?.ok || !!resp?.error;
+          if (!failed) {
             currentSession = resp.session;
             log('Time manually set to', input.value, '=', ms, 'ms');
           }
           renderContainer(container, issue);
+          if (failed) showActionFailure(container, 'SET_TIME', resp);
           if (currentSession?.status === 'running') startDisplayTimer(container);
         });
       } else {
@@ -527,10 +583,10 @@
         if (clickTimer) return; // already waiting
         clickTimer = setTimeout(() => {
           clickTimer = null;
-          handleClick(container, issue, action);
+          handleClick(container, issue, action, btn);
         }, 250);
       } else {
-        handleClick(container, issue, action);
+        handleClick(container, issue, action, btn);
       }
     });
     container.addEventListener('dblclick', (e) => {
@@ -591,10 +647,15 @@
     onUrlChange();
   });
 
-  chrome.runtime.onMessage.addListener((message) => {
-    if (message.action === 'TICK' && message.payload?.session) {
-      currentSession = message.payload.session;
-    }
+  chrome.storage.onChanged.addListener((changes, areaName) => {
+    if (areaName !== 'local' || !changes.activeSession) return;
+    currentSession = changes.activeSession.newValue || null;
+    const container = document.getElementById(CONTAINER_ID);
+    const issue = parseIssuePage();
+    if (!container || !issue) return;
+    renderContainer(container, issue);
+    if (currentSession?.status === 'running') startDisplayTimer(container);
+    else stopDisplayTimer();
   });
 
   log('Content script loaded:', window.location.href);

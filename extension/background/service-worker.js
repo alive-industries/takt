@@ -291,10 +291,7 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
   const { activeSession } = await getState();
   if (!activeSession) {
     await maybeClearAlarm();
-    return;
   }
-  // Broadcast tick so any open content scripts / popup can sync
-  broadcastTick(activeSession);
 });
 
 async function onWake() {
@@ -307,17 +304,6 @@ async function onWake() {
 
 chrome.runtime.onStartup.addListener(onWake);
 chrome.runtime.onInstalled.addListener(onWake);
-
-function broadcastTick(session) {
-  const elapsedMs = computeElapsed(session);
-  const message = { action: 'TICK', payload: { elapsedMs, session } };
-  // Send to all tabs with content scripts
-  chrome.tabs.query({ url: 'https://github.com/*/*/issues/*' }, (tabs) => {
-    for (const tab of tabs) {
-      chrome.tabs.sendMessage(tab.id, message).catch(() => {});
-    }
-  });
-}
 
 // --- Message handling ---
 
@@ -542,7 +528,7 @@ async function handleMessage({ action, payload }) {
       let commentResult = null;
       try {
         const ghRepo = /^[^/\s]+\/[^/\s]+$/.test(completed.repo);
-        if (ghRepo && completed.issueNumber > 0) {
+        if (completed.durationMs >= 60_000 && ghRepo && completed.issueNumber > 0) {
           const { settings } = await chrome.storage.local.get('settings');
           if (settings?.pat) {
             let username = settings.username;
@@ -558,10 +544,9 @@ async function handleMessage({ action, payload }) {
             }
             if (username) {
               const [owner, repo] = completed.repo.split('/');
-              const durationHours = Math.round((completed.durationMs / 3600000) * 4) / 4;
               await postTimeComment(
                 settings.pat, owner, repo, completed.issueNumber,
-                durationHours, username
+                completed.durationMs, username
               );
               commentResult = { ok: true };
             }
@@ -739,7 +724,13 @@ async function handleMessage({ action, payload }) {
       // older than the cache's 30-day retention — reconciling would write
       // those rows in then immediately prune them on save.
       try {
-        const { skipReconcile, backendOnly = false, ...apiParams } = payload || {};
+        const {
+          skipReconcile,
+          backendOnly = false,
+          reconcileFrom,
+          reconcileTo,
+          ...apiParams
+        } = payload || {};
         const sessions = await listBackendSessions(apiParams);
         const records = sessions.map(cache.fromBackendSession);
         // An admin viewing another member is a backend-only operation. Never
@@ -747,8 +738,8 @@ async function handleMessage({ action, payload }) {
         // popup totals and later "My Time" reads would leak across users.
         if (!skipReconcile && !backendOnly) {
           await cache.reconcileWindow({
-            from: apiParams.from,
-            to: apiParams.to,
+            from: reconcileFrom ?? apiParams.from,
+            to: reconcileTo ?? apiParams.to,
             records,
           });
         }

@@ -112,6 +112,24 @@
     return buf;
   }
 
+  function localDayStartMs(dateString) {
+    const [year, month, day] = dateString.split('-').map(Number);
+    return new Date(year, month - 1, day).getTime();
+  }
+
+  function localDayEndExclusiveMs(dateString) {
+    const [year, month, day] = dateString.split('-').map(Number);
+    return new Date(year, month - 1, day + 1).getTime();
+  }
+
+  function localDateKey(ms) {
+    const date = new Date(ms);
+    const year = String(date.getFullYear()).padStart(4, '0');
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  }
+
   /**
    * Attach digit-only, auto-formatting behaviour to an <input>.
    *
@@ -202,5 +220,8 @@
     partsToDisplay,
     partsValid,
     bindTimeInput,
+    localDayStartMs,
+    localDayEndExclusiveMs,
+    localDateKey,
   };
 })(typeof self !== 'undefined' ? self : this);
