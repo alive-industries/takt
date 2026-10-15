@@ -2,13 +2,11 @@
   'use strict';
 
   const views = {
-    time: { title: 'Time', url: '../mytime/mytime.html' },
-    clients: { title: 'Clients', native: true },
-    settings: { title: 'Settings', url: '../options/options.html' },
-    admin: { title: 'Admin', url: '../admin/admin.html' },
+    time: { title: 'Time', panel: 'view-time', script: 'views/time.js' },
+    clients: { title: 'Clients', panel: 'view-clients', native: true },
+    settings: { title: 'Settings', panel: 'view-settings', script: 'views/settings.js' },
+    admin: { title: 'Admin', panel: 'view-admin', script: 'views/admin.js' },
   };
-  const frame = document.getElementById('workspace-frame');
-  const clientsWorkspace = document.getElementById('clients-workspace');
   const title = document.getElementById('view-title');
   const clientsNav = document.getElementById('clients-nav');
   const adminNav = document.getElementById('admin-nav');
@@ -25,6 +23,7 @@
   let selectedClientId = null;
   let clientsLoaded = false;
   let bigQueryStatusInterval = null;
+  const loadedViewScripts = new Set();
   const { escapeHtml } = self.TaktUI;
 
   function send(action, payload = {}) {
@@ -228,24 +227,34 @@
   }
 
   function showView(name) {
-    const view = views[name] || views.time;
-    if ((name === 'admin' || name === 'clients') && currentUser?.role !== 'admin') {
+    const viewName = views[name] ? name : 'time';
+    const view = views[viewName];
+    if ((viewName === 'admin' || viewName === 'clients') && currentUser?.role !== 'admin') {
       return showView('time');
     }
+    document.querySelectorAll('.modal-overlay').forEach((modal) => {
+      modal.hidden = true;
+    });
+    Object.values(views).forEach(({ panel }) => {
+      document.getElementById(panel).hidden = panel !== view.panel;
+    });
     document.querySelectorAll('.nav-item').forEach((item) => {
-      item.classList.toggle('is-active', item.dataset.view === name);
+      item.classList.toggle('is-active', item.dataset.view === viewName);
     });
     title.textContent = view.title;
-    frame.hidden = !!view.native;
-    frame.style.display = view.native ? 'none' : 'block';
-    clientsWorkspace.hidden = !view.native;
-    clientsWorkspace.style.display = view.native ? 'grid' : 'none';
-    if (view.native) loadClients();
-    else {
-      frame.title = `Takt ${view.title}`;
-      frame.src = view.url;
+    if (view.native) {
+      loadClients();
+    } else if (!loadedViewScripts.has(view.script)) {
+      const script = document.createElement('script');
+      script.src = view.script;
+      script.addEventListener('error', () => {
+        loadedViewScripts.delete(view.script);
+        toast(`Could not load the ${view.title} view`);
+      });
+      loadedViewScripts.add(view.script);
+      document.body.appendChild(script);
     }
-    if (window.location.hash !== `#${name}`) history.replaceState(null, '', `#${name}`);
+    if (window.location.hash !== `#${viewName}`) history.replaceState(null, '', `#${viewName}`);
   }
 
   async function init() {
@@ -261,27 +270,32 @@
       bqSyncButton.hidden = currentUser.role !== 'admin';
     }
     const online = !!ping?.ok;
-    document.getElementById('status-dot').style.background = online ? '#42c88a' : '#ef6b73';
+    const statusDot = document.getElementById('status-dot');
+    statusDot.classList.toggle('is-online', online);
+    statusDot.classList.toggle('is-offline', !online);
     const syncPill = document.getElementById('sync-pill');
     const failed = queue?.failed?.length || 0;
     let syncText;
-    let syncColor;
+    let syncTone;
     if (failed > 0) {
       syncText = `${failed} failed to sync`;
-      syncColor = '#d1242f';
+      syncTone = 'chip--error';
     } else if (queue?.authBlocked) {
       syncText = 'Sync paused — check GitHub token';
-      syncColor = '#9a6700';
+      syncTone = 'chip--warn';
     } else if ((queue?.pending || 0) > 0) {
       syncText = `${queue.pending} pending`;
-      syncColor = '#9a6700';
+      syncTone = 'chip--warn';
     } else {
       syncText = online ? 'All changes synced' : 'Working offline';
-      syncColor = online ? '#1a7f37' : '#d1242f';
+      syncTone = online ? 'chip--ok' : 'chip--error';
     }
-    syncPill.innerHTML = `<span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:${syncColor};margin-right:6px;vertical-align:middle;"></span>${escapeHtml(syncText)}`;
-    syncPill.style.color = syncColor;
-    syncPill.style.borderColor = syncColor;
+    const chip = document.createElement('span');
+    chip.className = `chip ${syncTone}`;
+    const chipDot = document.createElement('span');
+    chipDot.className = 'chip-dot';
+    chip.append(chipDot, document.createTextNode(syncText));
+    syncPill.replaceChildren(chip);
     showView(window.location.hash.slice(1) || 'time');
     if (currentUser?.role === 'admin') {
       await loadBigQueryStatus();

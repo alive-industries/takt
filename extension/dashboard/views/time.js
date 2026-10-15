@@ -832,6 +832,7 @@
 
   async function openAddModal() {
     addErrorEl.textContent = '';
+    addErrorEl.hidden = true;
     addDateInput.value = self.TaktTime.localDateKey(Date.now());
     addModeSelect.value = 'delivery';
     populateClientSelect();
@@ -866,6 +867,7 @@
 
   function showAddError(msg) {
     addErrorEl.textContent = msg;
+    addErrorEl.hidden = !msg;
   }
 
   // Collect + validate the modal state. Returns either
