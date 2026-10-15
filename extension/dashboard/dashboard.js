@@ -2,12 +2,26 @@
   'use strict';
 
   const views = {
-    time: { title: 'Time', panel: 'view-time', script: 'views/time.js' },
-    clients: { title: 'Clients', panel: 'view-clients', native: true },
-    settings: { title: 'Settings', panel: 'view-settings', script: 'views/settings.js' },
-    admin: { title: 'Admin', panel: 'view-admin', script: 'views/admin.js' },
+    time: {
+      title: 'Time', eyebrow: 'Time tracking', panel: 'view-time', script: 'views/time.js',
+      subtitle: 'Everything you have logged, synced to the Takt backend and your GitHub Projects.',
+    },
+    clients: {
+      title: 'Clients', eyebrow: 'Reporting structure', panel: 'view-clients', native: true,
+      subtitle: 'Map GitHub projects and repositories to the clients they are billed to.',
+    },
+    settings: {
+      title: 'Settings', eyebrow: 'Connection', panel: 'view-settings', script: 'views/settings.js',
+      subtitle: 'Your GitHub token, backend connection and per-project time fields.',
+    },
+    admin: {
+      title: 'Admin', eyebrow: 'Organisation', panel: 'view-admin', script: 'views/admin.js',
+      subtitle: 'Members, roles and the configuration shared across your org.',
+    },
   };
   const title = document.getElementById('view-title');
+  const eyebrow = document.getElementById('view-eyebrow');
+  const subtitle = document.getElementById('view-subtitle');
   const clientsNav = document.getElementById('clients-nav');
   const adminNav = document.getElementById('admin-nav');
   const bqStatus = document.getElementById('bq-status');
@@ -242,6 +256,8 @@
       item.classList.toggle('is-active', item.dataset.view === viewName);
     });
     title.textContent = view.title;
+    eyebrow.textContent = view.eyebrow;
+    subtitle.textContent = view.subtitle;
     if (view.native) {
       loadClients();
     } else if (!loadedViewScripts.has(view.script)) {

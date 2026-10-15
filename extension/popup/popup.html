@@ -3,43 +3,11 @@
 <head>
   <meta charset="UTF-8">
   <link rel="stylesheet" href="../lib/takt.css">
-  <style>
-    body { width: 344px; font-size: 13px; background: var(--white); }
-    .header { display: flex; align-items: center; gap: 10px; padding: 14px 16px; border-bottom: 1px solid #eeeff2; }
-    .brand-mark { width: 26px; height: 26px; display: grid; place-items: center; flex: none; border-radius: var(--radius-xs); color: var(--white); background: var(--teal); font-size: 13px; font-weight: 700; }
-    .brand-name { font-size: 15px; font-weight: 600; }
-    #sync-status { margin-left: auto; }
-    #sync-status .chip { height: 24px; padding: 0 10px; font-size: 11px; }
-    .sync-retry { margin-left: 2px; padding: 0; border: 0; color: inherit; background: none; font: inherit; text-decoration: underline; }
-
-    .active { margin: 12px; padding: 14px 16px; border: 1px solid #bfe3d4; border-radius: var(--radius-sm); background: var(--teal-light); }
-    .active--paused { border-color: #f1dca6; background: var(--amber-light); }
-    .active-empty { margin: 12px; padding: 14px 16px; border: 1px dashed var(--border); border-radius: var(--radius-sm); color: var(--gray-dark); font-size: 12px; }
-    .active-repo { overflow: hidden; color: var(--teal-dark); font-size: 10px; font-weight: 600; letter-spacing: .1em; text-overflow: ellipsis; text-transform: uppercase; white-space: nowrap; }
-    .active--paused .active-repo { color: var(--amber); }
-    .active-issue { margin-top: 2px; font-weight: 600; }
-    .active-timer { margin: 6px 0 12px; font-family: var(--font-mono); font-size: 26px; font-weight: 600; font-variant-numeric: tabular-nums; }
-    .active-timer--running { color: var(--teal-dark); }
-    .active-timer--paused { color: var(--amber); }
-    .active-controls { display: flex; gap: 8px; }
-    .active-controls .btn { flex: 1; }
-
-    .section-title { padding: 8px 16px 6px; color: var(--gray-dark); font-size: 11px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; }
-    .sessions { margin: 0; padding: 0; list-style: none; }
-    .sessions li { padding: 10px 16px; border-top: 1px solid #eeeff2; font-size: 12px; }
-    .sessions li:hover { background: #fafafa; }
-    .sessions li.empty { color: var(--gray-dark); }
-    .session-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
-    .session-ref { overflow: hidden; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
-    .session-duration { margin-top: 2px; color: var(--gray-dark); font-family: var(--font-mono); font-size: 11px; }
-    .footer { padding: 12px 16px 14px; border-top: 1px solid #eeeff2; }
-    .footer .btn { width: 100%; }
-  </style>
 </head>
-<body>
-  <div class="header">
-    <span class="brand-mark">T</span>
-    <span class="brand-name">Takt</span>
+<body class="popup">
+  <div class="popup-header">
+    <img src="../assets/alive-logo.png" alt="">
+    <span class="brand-name">Takt<span class="text-teal">.</span></span>
     <span id="sync-status"></span>
   </div>
 
@@ -48,7 +16,7 @@
   <div class="section-title">Recent</div>
   <ul id="sessions-list" class="sessions"></ul>
 
-  <div class="footer">
+  <div class="popup-footer">
     <button class="btn btn--dark" id="dashboard-link">Open dashboard</button>
   </div>
 

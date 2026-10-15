@@ -1,0 +1,151 @@
+/* Dashboard shell + views (dashboard/dashboard.html) */
+@layer components {
+  /* Header.astro */
+  .site-header { @apply sticky top-0 z-40 border-b border-border/30 bg-white/70 backdrop-blur-xl; }
+  .header-inner { @apply mx-auto flex h-16 max-w-[1300px] items-center gap-6 px-5; }
+  .brand { @apply flex items-center gap-2 text-charcoal hover:text-charcoal; }
+  .brand img { @apply size-7 transition-transform duration-300; }
+  .brand:hover img { @apply scale-110; }
+  .brand-name { @apply text-[17px] font-medium tracking-tight text-charcoal; }
+  .primary-nav { @apply flex items-center gap-1; }
+  .nav-item { @apply inline-flex items-center gap-2 rounded-full px-3 py-1.5 text-[13px] font-medium text-charcoal/70 transition-all duration-200 hover:bg-gray/60 hover:text-charcoal; }
+  .nav-item.is-active { @apply bg-teal-light text-teal hover:bg-teal-light hover:text-teal; }
+  .nav-icon svg { @apply size-4; }
+  .header-actions { @apply ml-auto flex items-center gap-3; }
+  .identity { @apply flex items-center gap-2.5 border-l border-border/40 pl-4; }
+  .identity strong, .identity span { @apply block leading-tight; }
+  .identity strong { @apply max-w-40 truncate text-[13px] font-medium; }
+  .identity span:not(.status-dot) { @apply text-xs text-gray-dark capitalize; }
+  .status-dot { @apply size-2 flex-none rounded-full bg-[#d9a400] shadow-[0_0_0_4px_rgba(217,164,0,.14)]; }
+  .status-dot.is-online { @apply bg-teal shadow-[0_0_0_4px_rgba(0,120,86,.14)]; }
+  .status-dot.is-offline { @apply bg-red shadow-[0_0_0_4px_rgba(180,35,24,.12)]; }
+
+  /* Page heading: SectionHeading pattern over the hero particle network */
+  .page-hero { @apply relative overflow-hidden border-b border-border/30; }
+  .page-hero::before {
+    content: ''; position: absolute; inset: 0;
+    background: url('../assets/network.svg') center top / 1440px auto repeat-x;
+    mask-image: linear-gradient(to bottom, rgba(0,0,0,.9), rgba(0,0,0,.25));
+  }
+  .page-hero-inner { @apply relative mx-auto flex max-w-[1300px] flex-wrap items-end justify-between gap-6 px-5 pt-14 pb-10; }
+  .page-hero h1 { @apply mt-3 text-4xl font-medium tracking-tight text-charcoal lg:text-5xl; }
+  .page-hero h1 .dot { @apply text-teal; }
+  .page-sub { @apply mt-3 max-w-2xl text-base leading-relaxed text-gray-dark; }
+  .hero-actions { @apply flex items-center gap-3; }
+  .bq-status { @apply text-right; }
+  .bq-status strong, .bq-status span { @apply block; }
+  .bq-status strong { @apply text-[13px] font-medium; }
+  .bq-status span { @apply text-xs text-gray-dark; }
+
+  .workspace { @apply mx-auto w-full max-w-[1300px] px-5 pt-8 pb-section; }
+  .view { @apply grid animate-fade-in-up content-start gap-6; }
+  .view-toolbar > .btn:first-of-type { @apply ml-auto; }
+
+  /* Time */
+  .action-strips { @apply grid gap-2.5; }
+  .source-pip { @apply inline-flex items-center gap-2 text-[13px] font-medium text-gray-dark; }
+  .source-pip .dot { @apply size-1.5 rounded-full bg-border; }
+  .source-pip--backend .dot { @apply bg-teal; }
+  .source-pip--local .dot { @apply bg-[#d9a400]; }
+  .source-pip--error .dot { @apply bg-red; }
+  .active-timer-panel { @apply relative isolate flex flex-wrap items-center gap-6 overflow-hidden rounded-[var(--radius-lg)] border border-teal/15 bg-white/70 px-8 py-7 shadow-lg backdrop-blur-xl; }
+  .active-timer-panel::before {
+    content: ''; position: absolute; z-index: -1; top: -180px; right: -60px; width: 520px; height: 420px; border-radius: 50%;
+    background: radial-gradient(closest-side, rgba(0,120,86,.18), rgba(0,120,86,0));
+  }
+  .active-timer-panel::after {
+    content: ''; position: absolute; z-index: -1; inset: 0; opacity: .5;
+    background: url('../assets/network.svg') right -200px center / 1100px auto no-repeat;
+  }
+  .active-timer-panel--paused { @apply border-amber/15; }
+  .active-timer-panel--paused::before { background: radial-gradient(closest-side, rgba(217,164,0,.2), rgba(217,164,0,0)); }
+  .active-timer-info { @apply min-w-0 flex-1; }
+  .active-timer-meta { @apply text-xs font-medium tracking-[0.2em] text-teal uppercase; }
+  .active-timer-panel--paused .active-timer-meta { @apply text-amber; }
+  .active-timer-title { @apply mt-1.5 truncate text-xl font-medium tracking-tight; }
+  .active-timer-clock { @apply font-heading text-5xl leading-none font-bold tracking-tight text-teal tabular-nums; }
+  .active-timer-clock--paused { @apply text-amber; }
+  .active-timer-actions { @apply flex gap-2; }
+  .filters { @apply gap-x-5 gap-y-3 rounded-[var(--radius-lg)] border border-border/50 bg-white px-5 py-3; }
+  .filters .field--inline > select { min-width: 180px; }
+  .filters .field--inline > input[type="date"] { min-width: 150px; }
+  .td-sync { @apply text-center; }
+  .td-actions { @apply text-right whitespace-nowrap; }
+  .sync-badge { @apply inline-grid size-6 place-items-center rounded-full bg-gray text-xs font-bold text-gray-dark; }
+  .sync-badge--synced { @apply bg-teal-light text-teal; }
+  .sync-badge--error { @apply bg-red-light text-red; }
+  .sync-spinner { @apply inline-block size-3.5 animate-spin rounded-full border-2 border-border/60 border-t-teal align-middle; }
+  .duration-editable { @apply cursor-text rounded-lg; }
+  .duration-editable:hover { @apply bg-teal-light; }
+  .edit-input { width: 110px; @apply min-h-8 rounded-lg px-2 py-1 text-[13px]; font-family: var(--font-mono); }
+  .reporting-fix { @apply mt-2 flex gap-1.5; }
+  .reporting-fix select { width: auto; @apply min-h-8 min-w-36 py-1 pr-8 pl-3 text-xs; }
+  .reporting-fix button { @apply min-h-8 rounded-full bg-teal px-3.5 text-xs font-medium text-white transition-colors hover:bg-teal-dark; }
+  .empty-state { @apply !py-12 text-center text-gray-dark; }
+
+  /* Settings */
+  .projects-section { display: none; }
+  .projects-section.visible { display: grid; }
+  .project-row { @apply flex items-center gap-3 border-b border-border/30 py-3 last:border-b-0; }
+  .project-name { @apply flex min-w-0 flex-1 items-center gap-2 truncate font-medium; }
+  .project-name svg { @apply flex-none fill-gray-dark; }
+  .project-field-select { @apply w-60 flex-none; }
+  .project-remove { @apply size-8 flex-none rounded-full text-base text-gray-dark transition-colors hover:bg-red-light hover:text-red; }
+  .project-row--removed .project-name { @apply text-gray-dark line-through; }
+  .project-row--removed .project-field-select, .project-row--removed .project-remove { display: none; }
+  .project-undo { @apply text-[13px] font-medium text-teal hover:underline; }
+
+  /* Admin */
+  .gate { display: none; }
+  .gate.visible { display: block; }
+  .excluded-list { @apply max-h-[300px] overflow-y-auto rounded-[var(--radius-sm)] border border-border/50; }
+  .excluded-list label { @apply flex items-center gap-2.5 border-b border-border/30 px-4 py-2.5 text-[13px] last:border-b-0 hover:bg-gray/50; }
+  .member-actions, .actions-cell { @apply text-right whitespace-nowrap; }
+
+  /* Clients */
+  #view-clients { @apply grid-cols-[minmax(260px,300px)_minmax(0,1fr)] items-start; }
+  .clients-panel { @apply sticky top-24 rounded-[var(--radius-md)] border border-border/50 bg-white p-4; }
+  .panel-heading { @apply mx-2 mb-4 flex items-center justify-between gap-3; }
+  .panel-heading h2 { @apply mt-1.5 text-2xl; }
+  .new-client-form { @apply mx-2 mb-4 grid gap-1.5 rounded-[var(--radius-sm)] bg-gray p-3.5; }
+  .new-client-form label { @apply text-[13px] font-medium; }
+  .inline-form { @apply flex gap-2; }
+  .inline-form button { @apply rounded-full bg-charcoal px-4 text-[13px] font-medium text-white hover:bg-black; }
+  .client-list { @apply grid gap-1; }
+  .client-list-item { @apply flex w-full items-center justify-between gap-2 rounded-[var(--radius-sm)] px-3.5 py-3 text-left text-charcoal transition-colors hover:bg-gray; }
+  .client-list-item.is-active { @apply bg-teal-light; }
+  .client-list-item strong, .client-list-item span { @apply block; }
+  .client-list-item strong { @apply font-medium; }
+  .client-list-item span { @apply text-xs text-gray-dark; }
+  .client-list-item .count-badge { @apply rounded-full border border-teal/15 bg-white px-2.5 py-0.5 text-[11px] font-medium text-teal; }
+  .client-detail { @apply min-w-0; }
+  .empty-detail { @apply relative mx-auto my-16 max-w-sm text-center text-gray-dark; }
+  .empty-detail h2 { @apply mb-2 text-2xl text-charcoal; }
+  .empty-icon { @apply mx-auto mb-4 grid size-14 place-items-center rounded-[var(--radius-md)] bg-teal-light text-2xl text-teal; }
+  .detail-heading { @apply mb-6 grid grid-cols-[minmax(220px,.8fr)_minmax(300px,1.2fr)] items-end gap-6; }
+  .detail-heading > * { @apply min-w-0; }
+  .detail-heading h2 { @apply mt-2 text-3xl tracking-tight; }
+  .detail-heading p { @apply mt-1.5 text-gray-dark; }
+  .project-picker, .repo-mapper { @apply grid min-w-0 grid-cols-[minmax(0,1fr)_auto] gap-2; }
+  .primary-button { @apply min-h-10 rounded-full bg-teal px-5 text-sm font-medium whitespace-nowrap text-white transition-all duration-200 enabled:hover:bg-teal-dark disabled:opacity-50; }
+  .hierarchy-label { @apply mt-6 mb-3 text-xs font-medium tracking-[0.2em] text-teal uppercase; }
+  .project-list { @apply grid min-w-0 gap-3; }
+  .project-card { @apply min-w-0 rounded-[var(--radius-md)] border border-border/50 bg-white p-card transition-all duration-200 hover:shadow-lg hover:shadow-charcoal/5; }
+  .project-title { @apply flex min-w-0 items-center justify-between gap-3; }
+  .project-title h3 { @apply min-w-0 truncate text-lg; }
+  .project-title span { @apply max-w-[42%] truncate text-xs text-gray-dark; }
+  .repo-chips { @apply my-3.5 flex flex-wrap gap-2; }
+  .repo-chip { @apply rounded-full bg-gray px-3 py-1 text-xs font-medium text-charcoal; }
+  .repo-empty { @apply text-[13px] text-gray-dark; }
+  .repo-mapper { @apply border-t border-border/30 pt-3.5; }
+
+  @media (max-width: 1180px) { .detail-heading { grid-template-columns: 1fr; } }
+  @media (max-width: 900px) {
+    .nav-item span:last-child, .identity > div { display: none; }
+    #view-clients { grid-template-columns: 1fr; }
+    .clients-panel { position: static; }
+  }
+  @media (max-width: 640px) {
+    .field-row, .repo-mapper, .project-picker { grid-template-columns: 1fr; }
+  }
+}

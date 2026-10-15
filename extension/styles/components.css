@@ -1,0 +1,104 @@
+@layer components {
+  .muted { @apply text-gray-dark; }
+  .mono { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+  .hint { @apply text-[13px] leading-relaxed text-gray-dark; }
+  /* SectionHeading eyebrow */
+  .eyebrow { @apply block text-xs font-medium uppercase tracking-[0.2em] text-teal; }
+  .stack { @apply grid gap-4; }
+  .toolbar { @apply flex flex-wrap items-center gap-2.5; }
+  .toolbar > input { flex: 1 1 220px; width: auto; }
+  .toolbar > select { flex: 0 0 auto; width: auto; min-width: 140px; }
+
+  /* Button.astro */
+  .btn {
+    @apply inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-full border border-border/70 bg-white px-5 py-2.5 text-sm leading-none font-medium text-charcoal transition-all duration-200;
+    @apply enabled:hover:bg-gray focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-teal/20 disabled:opacity-50;
+  }
+  .btn svg { flex: none; }
+  .btn--primary { @apply border-teal bg-teal text-white enabled:hover:border-teal-dark enabled:hover:bg-teal-dark; }
+  .btn--dark { @apply border-charcoal bg-charcoal text-white enabled:hover:border-black enabled:hover:bg-black enabled:hover:shadow-lg enabled:hover:shadow-charcoal/20; }
+  .btn--danger { @apply border-red/25 text-red enabled:hover:border-red enabled:hover:bg-red enabled:hover:text-white; }
+  .btn--ghost { @apply border-transparent bg-transparent enabled:hover:bg-gray; }
+  .btn--sm { @apply px-4 py-2 text-[13px]; }
+  .icon-btn {
+    @apply inline-grid size-9 place-items-center rounded-full border border-border/70 bg-white text-lg leading-none text-charcoal transition-all duration-200 hover:bg-gray;
+    @apply focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-teal/20;
+  }
+
+  .field { @apply grid gap-1.5; }
+  .field > label, .field-label { @apply text-sm font-medium text-charcoal; }
+  .field--inline { @apply flex items-center gap-2 text-[13px] font-medium text-gray-dark; }
+  .field--inline > select, .field--inline > input { width: auto; min-width: 150px; }
+  .field-row { @apply grid grid-cols-2 gap-3; }
+  .field-hint { @apply text-xs text-gray-dark; }
+
+  /* Card.astro / GlassCard.astro */
+  .card { @apply grid gap-5 rounded-[var(--radius-md)] border border-border/50 bg-white p-card; }
+  .card-header { @apply flex items-start justify-between gap-4; }
+  .card-title { @apply text-xl font-medium tracking-tight text-charcoal; }
+  .glass { @apply rounded-[var(--radius-lg)] border border-white/20 bg-white/70 p-card shadow-lg backdrop-blur-xl; }
+
+  /* Hero pill badge */
+  .chip { @apply inline-flex items-center gap-2 whitespace-nowrap rounded-full border px-3.5 py-1.5 text-[13px] leading-none font-medium; }
+  .chip-dot { @apply size-1.5 flex-none rounded-full bg-current; }
+  .chip--ok { @apply border-teal/15 bg-teal-light text-teal; }
+  .chip--ok .chip-dot { @apply animate-pulse-soft; }
+  .chip--warn { @apply border-amber/15 bg-amber-light text-amber; }
+  .chip--error { @apply border-red/15 bg-red-light text-red; }
+  .chip--info { @apply border-purple/15 bg-purple-light text-purple; }
+  .chip--muted { @apply border-transparent bg-gray text-gray-dark; }
+
+  .status { @apply text-[13px] font-medium; }
+  .status:empty { display: none; }
+  .status--success, .status--ok { @apply text-teal; }
+  .status--error { @apply text-red; }
+  .status--warn, .status--warning { @apply text-amber; }
+  .status--loading { @apply text-gray-dark; }
+
+  .callout { @apply flex items-center gap-4 rounded-[var(--radius-md)] border px-5 py-4 text-sm; }
+  .callout-body { @apply grid min-w-0 flex-1 gap-0.5; }
+  .callout strong { @apply font-medium; }
+  .callout--error { @apply border-red/15 bg-red-light; }
+  .callout--error strong { @apply text-red; }
+  .callout--warn { @apply border-amber/15 bg-amber-light; }
+  .callout--warn strong { @apply text-amber; }
+  .callout--info { @apply border-teal/15 bg-teal-light; }
+  .callout--info strong { @apply text-teal-dark; }
+
+  /* StatsSection.astro */
+  .stats { @apply grid grid-cols-[repeat(auto-fit,minmax(200px,1fr))] gap-4; }
+  .stat { @apply flex flex-col-reverse gap-2 rounded-[var(--radius-md)] border border-border/50 bg-white p-card; }
+  .stat-label { @apply text-sm text-gray-dark; }
+  .stat-value { @apply font-heading text-4xl leading-none font-bold tracking-tight text-teal tabular-nums md:text-5xl; }
+
+  .table-wrap { @apply overflow-x-auto rounded-[var(--radius-md)] border border-border/50 bg-white; }
+  .table { @apply w-full border-collapse text-sm; }
+  .table th { @apply border-b border-border/40 bg-gray/60 px-5 py-3 text-left text-xs font-medium tracking-[0.12em] whitespace-nowrap text-gray-dark uppercase; }
+  .table td { @apply border-b border-border/30 px-5 py-4 align-middle; }
+  .table tbody tr:last-child td { @apply border-b-0; }
+  .table tbody tr { @apply transition-colors hover:bg-gray/40; }
+
+  /* Badge.astro */
+  .badge { @apply inline-block rounded-full bg-gray px-3 py-1 text-xs leading-none font-medium text-gray-dark; }
+  .badge + .badge { @apply ml-1.5; }
+  .badge--admin { @apply bg-purple-light text-purple; }
+  .badge--active, .badge--org { @apply bg-teal-light text-teal; }
+  .badge--pending { @apply bg-amber-light text-amber; }
+  .badge--revoked { @apply bg-red-light text-red; }
+
+  .modal-overlay { @apply fixed inset-0 z-50 grid place-items-center bg-charcoal/40 p-6 backdrop-blur-sm; }
+  .modal { @apply flex max-h-[calc(100vh-48px)] w-[min(560px,100%)] animate-fade-in-up flex-col rounded-[var(--radius-lg)] bg-white shadow-2xl; }
+  .modal-header { @apply flex items-center justify-between gap-3 px-7 pt-7; }
+  .modal-header h2 { @apply text-2xl tracking-tight; }
+  .modal-header p { @apply text-[13px] text-gray-dark; }
+  .modal-body { @apply grid gap-4 overflow-y-auto px-7 py-5; }
+  .modal-actions { @apply flex justify-end gap-2.5 border-t border-border/30 px-7 py-5; }
+
+  .toast { @apply fixed right-6 bottom-6 z-[60] max-w-sm animate-fade-in-up rounded-[var(--radius-sm)] bg-charcoal px-5 py-3 text-[13px] font-medium text-white shadow-lg; }
+  .toast--success { @apply bg-teal-dark; }
+  .toast--warning { @apply bg-amber-light text-amber; }
+  .toast--error { @apply bg-red; }
+
+  /* Faint particle network, as on the website hero */
+  .network-bg { background: url('../assets/network.svg') center top / 1440px auto repeat-x; }
+}
