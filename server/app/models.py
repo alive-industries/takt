@@ -69,6 +69,8 @@ class SessionIn(BaseModel):
 
     @model_validator(mode="after")
     def normalize_entry(self) -> "SessionIn":
+        if self.completed_at < self.started_at:
+            raise ValueError("completed_at must not be before started_at")
         self.source = self.source or (
             "github" if self.source_url and self.issue_number > 0 else "manual"
         )

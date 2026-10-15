@@ -8,7 +8,7 @@ from sqlalchemy import func, select
 
 from app.auth import Caller, get_caller
 from app.db import transaction
-from app.db_models import AuditLogRow, OutboxEventRow
+from app.db_models import AuditLogRow, ClientRow, OutboxEventRow
 from app.main import app
 from app.models import GitHubUser, Member
 from app.services import store
@@ -290,7 +290,85 @@ def test_session_id_cannot_be_reused_for_another_member(client: TestClient) -> N
 
     app.dependency_overrides[get_caller] = lambda: other
     response = client.post("/v1/sessions", json=_payload(session_id))
-    assert response.status_code == 403
+    assert response.status_code == 409
+    assert response.json()["detail"]["code"] == "conflict"
+
+
+def test_project_mapped_to_different_client_conflicts(client: TestClient) -> None:
+    suffix = uuid4().hex
+    admin = _caller(f"admin-{suffix}", int(suffix[:10], 16), "admin")
+    app.dependency_overrides[get_caller] = lambda: admin
+    mapped_client = client.post("/v1/clients", json={"name": f"Mapped {suffix}"}).json()
+    other_client = client.post("/v1/clients", json={"name": f"Other {suffix}"}).json()
+    project_id = f"P_conflict_{suffix}"
+    assert client.post(
+        f"/v1/clients/{mapped_client['client_id']}/projects",
+        json={"project_id": project_id, "title": "Mapped project"},
+    ).status_code == 200
+
+    response = client.post(
+        "/v1/sessions",
+        json=_payload(
+            str(uuid4()),
+            source="manual",
+            type="delivery",
+            client_id=other_client["client_id"],
+            reporting_project_id=project_id,
+            project="Mapped project",
+            description="Conflict test",
+            repo=None,
+            issue_number=0,
+            project_ids=[project_id],
+            project_titles=["Mapped project"],
+        ),
+    )
+
+    assert response.status_code == 409
+    assert response.json()["detail"]["code"] == "conflict"
+
+
+def test_inactive_client_is_an_invalid_entry(client: TestClient) -> None:
+    suffix = uuid4().hex
+    admin = _caller(f"admin-{suffix}", int(suffix[:10], 16), "admin")
+    app.dependency_overrides[get_caller] = lambda: admin
+    reporting_client = client.post("/v1/clients", json={"name": f"Inactive {suffix}"}).json()
+    with transaction() as db:
+        db.get(ClientRow, reporting_client["client_id"]).active = False
+
+    response = client.post(
+        "/v1/sessions",
+        json=_payload(
+            str(uuid4()),
+            source="manual",
+            type="ops",
+            client_id=reporting_client["client_id"],
+            repo=None,
+            issue_number=0,
+            project_ids=[],
+            project_titles=[],
+        ),
+    )
+
+    assert response.status_code == 422
+    assert response.json()["detail"]["code"] == "invalid_entry"
+
+
+def test_completed_at_before_started_at_is_rejected(client: TestClient) -> None:
+    suffix = uuid4().hex
+    caller = _caller(f"member-{suffix}", int(suffix[:10], 16))
+    app.dependency_overrides[get_caller] = lambda: caller
+    completed = datetime.now(UTC)
+
+    response = client.post(
+        "/v1/sessions",
+        json=_payload(
+            str(uuid4()),
+            started_at=(completed + timedelta(minutes=1)).isoformat(),
+            completed_at=completed.isoformat(),
+        ),
+    )
+
+    assert response.status_code == 422
 
 
 def test_sessions_follow_stable_member_id_after_login_rename(client: TestClient) -> None:

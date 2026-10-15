@@ -24,6 +24,20 @@ class NotAuthorised(TaktError):
         super().__init__(message, status.HTTP_403_FORBIDDEN)
 
 
+class InvalidEntry(TaktError):
+    code = "invalid_entry"
+
+    def __init__(self, message: str):
+        super().__init__(message, status.HTTP_422_UNPROCESSABLE_ENTITY)
+
+
+class Conflict(TaktError):
+    code = "conflict"
+
+    def __init__(self, message: str):
+        super().__init__(message, status.HTTP_409_CONFLICT)
+
+
 class AdminRequired(TaktError):
     code = "admin_required"
 

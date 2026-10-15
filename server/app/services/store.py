@@ -22,7 +22,7 @@ from app.db_models import (
     SessionProjectRow,
     SessionRow,
 )
-from app.errors import AdminRequired, NotAuthorised
+from app.errors import AdminRequired, Conflict, InvalidEntry, NotAuthorised
 from app.models import (
     BigQuerySyncStatus,
     Client,
@@ -354,7 +354,7 @@ def map_client_project(client_id: int, project: Project, *, actor: str) -> Clien
     with transaction() as db:
         client = db.get(ClientRow, client_id)
         if client is None or not client.active:
-            raise NotAuthorised("Client not found or inactive.")
+            raise InvalidEntry("Client not found or inactive.")
         project_row = db.get(ProjectRow, project.project_id)
         if project_row is None:
             project_row = ProjectRow(
@@ -379,7 +379,7 @@ def map_client_project(client_id: int, project: Project, *, actor: str) -> Clien
                 )
             )
         elif mapping.client_id != client.id:
-            raise NotAuthorised("Project is already assigned to another client.")
+            raise Conflict("Project is already assigned to another client.")
         _audit(
             db,
             actor=actor,
@@ -399,7 +399,7 @@ def map_project_repository(client_id: int, project_id: str, repo: str, *, actor:
         client = db.get(ClientRow, client_id)
         project_mapping = db.get(ClientProjectRow, project_id)
         if client is None or project_mapping is None or project_mapping.client_id != client.id:
-            raise NotAuthorised("Project is not mapped to this client.")
+            raise InvalidEntry("Project is not mapped to this client.")
         repository = _upsert_repository(db, repo, now)
         link = db.get(ProjectRepositoryRow, (project_id, repository.id))
         if link is None:
@@ -504,12 +504,12 @@ def create_session(payload: SessionIn, *, caller_login: str, is_admin: bool) -> 
             select(MemberRow).where(func.lower(MemberRow.github_login) == target_login.lower())
         )
         if target is None or target.status != "active":
-            raise NotAuthorised("The selected member is not active.")
+            raise InvalidEntry("The selected member is not active.")
 
         existing = db.get(SessionRow, payload.session_id)
         if existing:
             if existing.member_id != target.id:
-                raise NotAuthorised("Session ID is already assigned to another member.")
+                raise Conflict("Session ID is already assigned to another member.")
             return _session_out(db, existing)
 
         repository = _upsert_repository(db, payload.repo, now) if payload.repo else None
@@ -533,11 +533,11 @@ def create_session(payload: SessionIn, *, caller_login: str, is_admin: bool) -> 
                 if repo_mapping is None:
                     mapped_client = None
         if client and mapped_client and client.id != mapped_client.id:
-            raise NotAuthorised("Project is mapped to a different client.")
+            raise Conflict("Project is mapped to a different client.")
         if payload.entry_type == "delivery":
             client = mapped_client
         if client is not None and not client.active:
-            raise NotAuthorised("The selected client is inactive.")
+            raise InvalidEntry("The selected client is inactive.")
 
         exact = payload.duration_ms / 3_600_000
         rounded = round(exact * 4) / 4
@@ -598,7 +598,7 @@ def create_session(payload: SessionIn, *, caller_login: str, is_admin: bool) -> 
         assert row is not None
         if inserted is None:
             if row.member_id != target.id:
-                raise NotAuthorised("Session ID is already assigned to another member.")
+                raise Conflict("Session ID is already assigned to another member.")
             return _session_out(db, row)
 
         for index, project_id in enumerate(payload.project_ids):
@@ -710,7 +710,7 @@ def update_session(
         if update.client_id is not None:
             client = db.get(ClientRow, update.client_id)
             if client is None or not client.active:
-                raise NotAuthorised("The selected client is inactive.")
+                raise InvalidEntry("The selected client is inactive.")
             row.client_id = client.id
             row.client_name = client.name
         if update.reporting_project_id is not None:
