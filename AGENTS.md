@@ -21,7 +21,15 @@ replica populated from `outbox_events` by `scripts/export_bigquery.py`.
 
 ### Extension (`extension/`)
 
-No build step. Load `extension/` as unpacked in `chrome://extensions`.
+No build step to load it: `extension/` loads unpacked in `chrome://extensions` as-is.
+
+Styles are Tailwind v4 with the alive-website theme. Edit `extension/styles/*.css`
+(never `extension/lib/takt.css`, which is generated and committed), then:
+
+```bash
+npm ci
+npm run build:css    # or watch:css while iterating; CI fails if takt.css is stale
+```
 The dashboard shell and native Clients workspace live in `dashboard/`; Time,
 Settings, and Admin are lazy-loaded scripts under `dashboard/views/`. Shared UI
 and time helpers live in `lib/`, and service-worker actions live in

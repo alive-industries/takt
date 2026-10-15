@@ -1,0 +1,40 @@
+/* Toolbar popup (popup/popup.html) */
+@layer components {
+  .popup { width: 344px; @apply text-[13px]; }
+  .popup-header { @apply sticky top-0 z-10 flex h-14 items-center gap-2 border-b border-border/30 bg-white/70 px-4 backdrop-blur-xl; }
+  .popup-header img { @apply size-6; }
+  .popup-header .brand-name { @apply text-[15px] font-medium tracking-tight; }
+  #sync-status { @apply ml-auto; }
+  #sync-status .chip { @apply px-2.5 py-1 text-[11px]; }
+  .sync-retry { @apply ml-0.5 underline; }
+
+  .active { @apply relative isolate m-3 overflow-hidden rounded-[var(--radius-md)] border border-teal/15 bg-white/70 p-5 shadow-lg; }
+  .active::before {
+    content: ''; position: absolute; z-index: -1; top: -120px; right: -90px; width: 300px; height: 260px; border-radius: 50%;
+    background: radial-gradient(closest-side, rgba(0,120,86,.2), rgba(0,120,86,0));
+  }
+  .active::after {
+    content: ''; position: absolute; z-index: -1; inset: 0; opacity: .45;
+    background: url('../assets/network.svg') left -300px center / 900px auto no-repeat;
+  }
+  .active--paused { @apply border-amber/15; }
+  .active--paused::before { background: radial-gradient(closest-side, rgba(217,164,0,.22), rgba(217,164,0,0)); }
+  .active-empty { @apply m-3 rounded-[var(--radius-md)] border border-dashed border-border/70 p-5 text-center text-xs text-gray-dark; }
+  .active-repo { @apply truncate text-[10px] font-medium tracking-[0.2em] text-teal uppercase; }
+  .active--paused .active-repo { @apply text-amber; }
+  .active-issue { @apply mt-1 truncate text-sm font-medium; }
+  .active-timer { @apply my-3.5 font-heading text-4xl leading-none font-bold tracking-tight tabular-nums; }
+  .active-timer--running { @apply text-teal; }
+  .active-timer--paused { @apply text-amber; }
+  .active-controls { @apply flex gap-2; }
+  .active-controls .btn { @apply flex-1; }
+
+  .section-title { @apply px-4 pt-3 pb-2 text-[10px] font-medium tracking-[0.2em] text-teal uppercase; }
+  .sessions li { @apply border-t border-border/30 px-4 py-3 text-xs transition-colors hover:bg-gray/50; }
+  .sessions li.empty { @apply text-gray-dark; }
+  .session-row { @apply flex items-center justify-between gap-2.5; }
+  .session-ref { @apply truncate font-medium; }
+  .session-duration { @apply mt-0.5 text-[11px] text-gray-dark tabular-nums; }
+  .popup-footer { @apply border-t border-border/30 p-4; }
+  .popup-footer .btn { @apply w-full; }
+}

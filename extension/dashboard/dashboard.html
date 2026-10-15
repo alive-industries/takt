@@ -5,46 +5,55 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Takt Dashboard</title>
   <link rel="stylesheet" href="../lib/takt.css">
-  <link rel="stylesheet" href="dashboard.css">
 </head>
 <body>
-  <div class="app-shell">
-    <aside class="sidebar">
-      <div class="brand">
-        <div class="brand-mark">T</div>
-        <div><strong>Takt</strong><span>Time tracking</span></div>
-      </div>
-      <nav>
-        <button class="nav-item is-active" data-view="time">
-          <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg></span><span>Time</span>
-        </button>
-        <button class="nav-item" data-view="clients" id="clients-nav" hidden>
-          <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 22V4a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v18Z"/><path d="M6 12H4a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2h2"/><path d="M18 9h2a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2h-2"/><path d="M10 6h4"/><path d="M10 10h4"/><path d="M10 14h4"/><path d="M10 18h4"/></svg></span><span>Clients</span>
-        </button>
-        <button class="nav-item" data-view="settings">
-          <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg></span><span>Settings</span>
-        </button>
-        <button class="nav-item" data-view="admin" id="admin-nav" hidden>
-          <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/></svg></span><span>Admin</span>
-        </button>
-      </nav>
-      <div class="sidebar-footer">
-        <span class="status-dot" id="status-dot"></span>
-        <div><strong id="identity">Connecting…</strong><span id="role">Checking backend</span></div>
-      </div>
-    </aside>
-    <main>
-      <header class="topbar">
-        <div><p class="eyebrow">Takt</p><h1 id="view-title">Time</h1></div>
-        <div class="topbar-actions">
-          <div class="bq-status" id="bq-status" hidden>
-            <strong id="bq-status-title">Checking BigQuery…</strong>
-            <span id="bq-status-detail"></span>
-          </div>
-          <button class="btn btn--dark btn--sm" id="bq-sync-button" hidden disabled>Push to BigQuery</button>
+  <div class="app">
+    <header class="site-header">
+      <div class="header-inner">
+        <a class="brand" href="#time">
+          <img src="../assets/alive-logo.png" alt="">
+          <span class="brand-name">Takt<span class="text-teal">.</span></span>
+        </a>
+        <nav class="primary-nav">
+          <button class="nav-item is-active" data-view="time">
+            <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg></span><span>Time</span>
+          </button>
+          <button class="nav-item" data-view="clients" id="clients-nav" hidden>
+            <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 22V4a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v18Z"/><path d="M6 12H4a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2h2"/><path d="M18 9h2a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2h-2"/><path d="M10 6h4"/><path d="M10 10h4"/><path d="M10 14h4"/><path d="M10 18h4"/></svg></span><span>Clients</span>
+          </button>
+          <button class="nav-item" data-view="settings">
+            <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg></span><span>Settings</span>
+          </button>
+          <button class="nav-item" data-view="admin" id="admin-nav" hidden>
+            <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/></svg></span><span>Admin</span>
+          </button>
+        </nav>
+        <div class="header-actions">
           <div class="sync-pill" id="sync-pill">Checking sync…</div>
+          <div class="identity">
+            <span class="status-dot" id="status-dot"></span>
+            <div><strong id="identity">Connecting…</strong><span id="role">Checking backend</span></div>
+          </div>
         </div>
-      </header>
+      </div>
+    </header>
+    <main>
+      <section class="page-hero">
+        <div class="page-hero-inner">
+          <div>
+            <span class="eyebrow" id="view-eyebrow">Time tracking</span>
+            <h1><span id="view-title">Time</span><span class="dot">.</span></h1>
+            <p class="page-sub" id="view-subtitle"></p>
+          </div>
+          <div class="hero-actions">
+            <div class="bq-status" id="bq-status" hidden>
+              <strong id="bq-status-title">Checking BigQuery…</strong>
+              <span id="bq-status-detail"></span>
+            </div>
+            <button class="btn btn--dark btn--sm" id="bq-sync-button" hidden disabled>Push to BigQuery</button>
+          </div>
+        </div>
+      </section>
       <section class="workspace">
         <section class="view" id="view-time" hidden>
           <div class="action-strips" id="action-strips" hidden>
@@ -137,7 +146,7 @@
         <section class="view clients-workspace" id="view-clients" hidden>
           <aside class="clients-panel">
             <div class="panel-heading">
-              <div><p class="eyebrow">Reporting structure</p><h2>Clients</h2></div>
+              <h2>All clients</h2>
               <button class="icon-btn" id="new-client-button" title="Create client"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></button>
             </div>
             <form class="new-client-form" id="new-client-form" hidden>

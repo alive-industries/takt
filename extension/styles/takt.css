@@ -1,0 +1,93 @@
+/* Source for ../lib/takt.css — run `npm run build:css` after editing.
+   Theme mirrors alive-website/src/styles/global.css; component classes
+   mirror alive-website/src/components/ui/*.astro. */
+@import "tailwindcss" source(none);
+@import "./components.css";
+@import "./dashboard.css";
+@import "./popup.css";
+
+@source "../dashboard";
+@source "../popup";
+
+@theme {
+  --color-teal: #007856;
+  --color-teal-dark: #005f44;
+  --color-teal-light: #e6f5ef;
+  --color-purple: #5e4b8b;
+  --color-purple-dark: #4a3a70;
+  --color-purple-light: #f0ecf5;
+  --color-charcoal: #2b2b2b;
+  --color-gray: #f5f5f5;
+  --color-gray-dark: #666666;
+  --color-border: #b8bcc6;
+  --color-white: #ffffff;
+  --color-black: #000000;
+  --color-amber: #8a5a00;
+  --color-amber-light: #fdf3dc;
+  --color-red: #b42318;
+  --color-red-light: #fdecea;
+
+  --font-sans: 'Archivo', system-ui, -apple-system, sans-serif;
+  --font-heading: 'Archivo', system-ui, -apple-system, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  --spacing-section: 64px;
+  --spacing-block: 48px;
+  --spacing-card: 24px;
+
+  --radius-sm: 12px;
+  --radius-md: 20px;
+  --radius-lg: 32px;
+  --radius-xl: 48px;
+  --radius-2xl: 63px;
+
+  --animate-fade-in-up: fade-in-up 0.6s ease-out both;
+  --animate-pulse-soft: pulse-soft 4s ease-in-out infinite;
+
+  @keyframes fade-in-up {
+    from { opacity: 0; transform: translateY(20px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+  @keyframes pulse-soft {
+    0%, 100% { opacity: 0.4; }
+    50% { opacity: 0.8; }
+  }
+}
+
+@font-face {
+  font-family: 'Archivo';
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url('../assets/fonts/archivo-latin-wght-normal.woff2') format('woff2');
+}
+
+@layer base {
+  html { -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; color-scheme: light; }
+  body { font-family: var(--font-sans); font-size: 14px; color: var(--color-charcoal); background: var(--color-white); line-height: 1.65; }
+  h1, h2, h3, h4 { font-family: var(--font-heading); font-weight: 500; line-height: 1.15; letter-spacing: -0.02em; }
+  h2 { @apply text-xl; }
+  h3 { @apply text-base; }
+  ::selection { background: var(--color-teal); color: var(--color-white); }
+  a { @apply text-teal font-medium transition-colors hover:text-teal-dark; }
+  code { @apply px-1.5 py-px rounded-md bg-gray text-[0.9em]; font-family: var(--font-mono); }
+  [hidden] { display: none !important; }
+
+  button, a, select, summary, label[for], input[type="checkbox"], input[type="radio"], input[type="date"],
+  [role="button"], [data-action] { cursor: pointer; }
+  button:disabled, select:disabled, input:disabled { cursor: not-allowed; }
+
+  input[type="text"], input[type="password"], input[type="date"], input[type="number"], input:not([type]), select, textarea {
+    @apply w-full min-h-10 px-3.5 py-2 rounded-[var(--radius-sm)] border border-border/70 bg-white text-sm text-charcoal transition-all duration-200;
+    @apply focus:outline-none focus:border-teal focus:ring-4 focus:ring-teal/15;
+    @apply disabled:bg-gray disabled:text-gray-dark;
+  }
+  input::placeholder { @apply text-gray-dark/70; }
+  select {
+    appearance: none;
+    padding-right: 36px;
+    background: var(--color-white) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 16 16' fill='%23666'%3E%3Cpath d='M4.4 6.2a.75.75 0 0 1 1.06 0L8 8.74l2.54-2.54a.75.75 0 1 1 1.06 1.06L8.53 10.33a.75.75 0 0 1-1.06 0L4.4 7.26a.75.75 0 0 1 0-1.06Z'/%3E%3C/svg%3E") no-repeat right 14px center;
+  }
+  select:disabled { background-color: var(--color-gray); }
+  input[type="checkbox"] { @apply size-4 m-0 accent-teal; }
+}

@@ -2,6 +2,12 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test:ext": "node --test tests/extension/*.test.js"
+    "test:ext": "node --test tests/extension/*.test.js",
+    "build:css": "tailwindcss -i extension/styles/takt.css -o extension/lib/takt.css",
+    "watch:css": "tailwindcss -i extension/styles/takt.css -o extension/lib/takt.css --watch"
+  },
+  "devDependencies": {
+    "@tailwindcss/cli": "^4.3.3",
+    "tailwindcss": "^4.3.3"
   }
 }
