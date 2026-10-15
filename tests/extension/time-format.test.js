@@ -26,3 +26,10 @@ test('local day helpers use local dates across the BST boundary', () => {
     23 * 60 * 60 * 1000
   );
 });
+
+test('quarter-hour rounding uses milliseconds', () => {
+  const { roundQuarterHours } = context.TaktTime;
+
+  assert.equal(roundQuarterHours(8 * 60 * 1000), 0.25);
+  assert.equal(roundQuarterHours(23 * 60 * 1000), 0.5);
+});

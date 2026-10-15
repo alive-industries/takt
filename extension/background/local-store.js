@@ -41,6 +41,7 @@
 //   }
 
 import { withLock } from './lock.js';
+import '../lib/time-format.js';
 
 const KEY = 'sessionCache';
 const RETENTION_DAYS = 30;

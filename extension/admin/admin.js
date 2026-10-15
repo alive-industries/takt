@@ -41,6 +41,9 @@
   const btnSaveConfig = document.getElementById('btn-save-config');
   const btnRefreshConfig = document.getElementById('btn-refresh-config');
   const configStatus = document.getElementById('config-status');
+  const escapeHtml = self.TaktUI.escapeHtml;
+  const showStatus = (element, text, type) =>
+    self.TaktUI.showStatus(element, text, type, 'status');
 
   const backLink = document.getElementById('back-link');
   backLink.addEventListener('click', (e) => {
@@ -50,26 +53,6 @@
 
   function send(action, payload = {}) {
     return chrome.runtime.sendMessage({ action, payload });
-  }
-
-  function showStatus(el, text, type) {
-    el.textContent = text;
-    el.className = type ? `status status--${type}` : 'status';
-  }
-
-  function escapeHtml(s) {
-    const d = document.createElement('div');
-    d.textContent = s == null ? '' : String(s);
-    return d.innerHTML;
-  }
-
-  function fmtDate(iso) {
-    if (!iso) return '—';
-    try {
-      return new Date(iso).toLocaleDateString();
-    } catch {
-      return '—';
-    }
   }
 
   // --- Gate ---
@@ -109,7 +92,7 @@
         <td>${roleBadge}</td>
         <td>${statusBadge}</td>
         <td>${sourceBadge}</td>
-        <td class="muted">${fmtDate(m.added_at)}</td>
+        <td class="muted">${self.TaktUI.formatDate(m.added_at)}</td>
         <td class="actions-cell"><div class="member-actions">
           <button class="btn btn--secondary" data-act="edit">Edit</button>
         </div></td>

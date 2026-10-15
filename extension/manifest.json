@@ -20,7 +20,7 @@
         "https://github.com/*/*/issues/*",
         "https://github.com/orgs/*/projects/*"
       ],
-      "js": ["lib/time-format.js", "content/github.js"],
+      "js": ["lib/time-format.js", "lib/ui.js", "content/github.js"],
       "run_at": "document_idle"
     }
   ],

@@ -2,6 +2,10 @@ function clone(value) {
   return value === undefined ? undefined : structuredClone(value);
 }
 
+function event() {
+  return { addListener() {} };
+}
+
 export function createChromeStub(initialStorage = {}) {
   const storage = clone(initialStorage);
   const delay = () => new Promise((resolve) => setTimeout(resolve, 0));
@@ -44,6 +48,10 @@ export function createChromeStub(initialStorage = {}) {
     },
     runtime: {
       getManifest: () => ({ version: 'test' }),
+      onMessage: event(),
+      onStartup: event(),
+      onInstalled: event(),
+      sendMessage: async () => ({}),
     },
   };
 

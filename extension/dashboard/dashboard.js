@@ -25,15 +25,10 @@
   let selectedClientId = null;
   let clientsLoaded = false;
   let bigQueryStatusInterval = null;
+  const { escapeHtml } = self.TaktUI;
 
   function send(action, payload = {}) {
     return chrome.runtime.sendMessage({ action, payload });
-  }
-
-  function escapeHtml(value) {
-    const element = document.createElement('div');
-    element.textContent = value == null ? '' : String(value);
-    return element.innerHTML;
   }
 
   function toast(message) {

@@ -130,6 +130,10 @@
     return `${year}-${month}-${day}`;
   }
 
+  function roundQuarterHours(ms) {
+    return Math.round((ms / 3600000) * 4) / 4;
+  }
+
   /**
    * Attach digit-only, auto-formatting behaviour to an <input>.
    *
@@ -223,5 +227,6 @@
     localDayStartMs,
     localDayEndExclusiveMs,
     localDateKey,
+    roundQuarterHours,
   };
-})(typeof self !== 'undefined' ? self : this);
+})(typeof self !== 'undefined' ? self : globalThis);

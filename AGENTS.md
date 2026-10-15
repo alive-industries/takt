@@ -22,11 +22,14 @@ replica populated from `outbox_events` by `scripts/export_bigquery.py`.
 ### Extension (`extension/`)
 
 No build step. Load `extension/` as unpacked in `chrome://extensions`.
-Syntax-check JS without loading:
+Shared UI and time helpers live in `lib/`; service-worker actions live in
+`background/handlers/`. The PostgreSQL store is split into modules under
+`server/app/services/store/`, and research notes live in `docs/research/`.
+Run extension tests and syntax checks without loading:
 
 ```bash
-node --check extension/background/service-worker.js   # etc.
-node --test tests/extension/*.test.js
+npm run test:ext
+find extension -name '*.js' -print0 | xargs -0 -n1 node --check
 ```
 
 ### Project-rename sync (`server/scripts/sync_projects.py`)

@@ -6,6 +6,7 @@
   let timerInterval = null;
   let currentSession = null;
   let observer = null;
+  const { formatElapsed, computeElapsed } = self.TaktUI;
 
   function log(...args) {
     console.log(LOG_PREFIX, ...args);
@@ -55,20 +56,6 @@
   }
 
   // --- Time formatting ---
-
-  function formatElapsed(ms) {
-    const totalSec = Math.floor(ms / 1000);
-    const h = Math.floor(totalSec / 3600);
-    const m = Math.floor((totalSec % 3600) / 60);
-    const s = totalSec % 60;
-    return [h, m, s].map((v) => String(v).padStart(2, '0')).join(':');
-  }
-
-  function computeElapsed(session) {
-    if (!session) return 0;
-    const running = session.status === 'running' ? Date.now() - session.startedAt : 0;
-    return session.accumulatedMs + running;
-  }
 
   // --- Styles ---
 

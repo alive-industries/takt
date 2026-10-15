@@ -6,24 +6,9 @@
 
   let currentSession = null;
   let displayInterval = null;
+  const { escapeHtml, formatElapsed, formatDuration, computeElapsed } = self.TaktUI;
 
   // --- Helpers ---
-
-  function formatElapsed(ms) {
-    const totalSec = Math.floor(ms / 1000);
-    const h = Math.floor(totalSec / 3600);
-    const m = Math.floor((totalSec % 3600) / 60);
-    const s = totalSec % 60;
-    return [h, m, s].map((v) => String(v).padStart(2, '0')).join(':');
-  }
-
-  function formatDuration(ms) {
-    const mins = Math.round(ms / 60000);
-    if (mins < 60) return `${mins}m`;
-    const h = Math.floor(mins / 60);
-    const m = mins % 60;
-    return m > 0 ? `${h}h ${m}m` : `${h}h`;
-  }
 
   function formatRelative(timestamp) {
     const diff = Date.now() - timestamp;
@@ -34,13 +19,6 @@
     if (hours < 24) return `${hours}h ago`;
     const days = Math.floor(hours / 24);
     return `${days}d ago`;
-  }
-
-  function computeElapsed(session) {
-    if (!session) return 0;
-    const running =
-      session.status === 'running' ? Date.now() - session.startedAt : 0;
-    return session.accumulatedMs + running;
   }
 
   function sendMessage(action, payload = {}) {
@@ -160,12 +138,6 @@
         }
       });
     });
-  }
-
-  function escapeHtml(str) {
-    const div = document.createElement('div');
-    div.textContent = str;
-    return div.innerHTML;
   }
 
   // --- Display timer ---

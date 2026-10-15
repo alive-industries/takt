@@ -1,5 +1,7 @@
 # Takt — Product Requirements Document
 
+> Historical note: this is the original pre-build PRD and is retained for historical reference.
+
 > **Takt** (n.) — the beat that sets the pace. A GitHub-native time tracker for any project.
 
 **Repo:** `alive-industries/takt`  
