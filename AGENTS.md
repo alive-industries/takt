@@ -22,9 +22,12 @@ replica populated from `outbox_events` by `scripts/export_bigquery.py`.
 ### Extension (`extension/`)
 
 No build step. Load `extension/` as unpacked in `chrome://extensions`.
-Shared UI and time helpers live in `lib/`; service-worker actions live in
-`background/handlers/`. The PostgreSQL store is split into modules under
-`server/app/services/store/`, and research notes live in `docs/research/`.
+The dashboard shell and native Clients workspace live in `dashboard/`; Time,
+Settings, and Admin are lazy-loaded scripts under `dashboard/views/`. Shared UI
+and time helpers live in `lib/`, and service-worker actions live in
+`background/handlers/`. Self-hosted font assets live in `assets/fonts/`. The
+PostgreSQL store is split into modules under `server/app/services/store/`, and
+research notes live in `docs/research/`.
 Run extension tests and syntax checks without loading:
 
 ```bash

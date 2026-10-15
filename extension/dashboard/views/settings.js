@@ -14,8 +14,10 @@
   const fieldsStatusEl = document.getElementById('fields-status');
 
   let discoveredProjects = []; // [{ id, title, org, fields: [{ id, name }] }]
-  const showStatus = (element, text, type) =>
-    self.TaktUI.showStatus(element, text, type, type ? 'status' : '');
+  const showStatus = (element, text, type) => {
+    const statusType = { success: 'ok', loading: 'warn' }[type] || type;
+    self.TaktUI.showStatus(element, text, statusType, type ? 'status' : '');
+  };
 
   function sendMessage(action, payload = {}) {
     return chrome.runtime.sendMessage({ action, payload });
@@ -54,36 +56,33 @@
     refreshBackendStatus();
   });
 
-  function setPip(text, color) {
-    backendStatusPip.innerHTML =
-      `<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${color};margin-right:4px;vertical-align:middle;"></span>` +
-      `<span style="color:${color};">${text}</span>`;
+  function setPip(text, type) {
+    backendStatusPip.textContent = text;
+    backendStatusPip.className = `status status--${type}`;
   }
 
   async function refreshBackendStatus() {
-    setPip('checking…', '#656d76');
+    setPip('checking…', 'warn');
     const resp = await sendMessage('BACKEND_PING');
     const adminLinkField = document.getElementById('admin-link-field');
     if (resp?.ok) {
       const me = resp.me || {};
       const role = me.role === 'admin' ? ' (admin)' : '';
-      setPip(`connected as ${me.login}${role}`, '#1a7f37');
+      setPip(`connected as ${me.login}${role}`, 'ok');
       if (adminLinkField) {
-        adminLinkField.style.display = me.role === 'admin' ? '' : 'none';
+        adminLinkField.hidden = me.role !== 'admin';
       }
     } else {
       const code = resp?.error?.code || 'error';
       const msg = resp?.error?.message || 'unreachable';
-      setPip(`${code}: ${msg}`, '#d1242f');
-      if (adminLinkField) adminLinkField.style.display = 'none';
+      setPip(`${code}: ${msg}`, 'error');
+      if (adminLinkField) adminLinkField.hidden = true;
     }
   }
 
   document.getElementById('admin-link').addEventListener('click', (e) => {
     e.preventDefault();
-    const url = chrome.runtime.getURL('dashboard/dashboard.html#admin');
-    if (window.top !== window) window.top.location.href = url;
-    else chrome.tabs.create({ url });
+    location.hash = 'admin';
   });
 
   // --- Validate & fetch projects ---
@@ -164,7 +163,7 @@
   // --- Render project field mapping UI ---
 
   function renderProjectFields() {
-    projectsSection.classList.add('visible');
+    projectsSection.hidden = false;
 
     const allFieldNames = new Set();
     for (const proj of discoveredProjects) {
@@ -212,11 +211,11 @@
 
         const nameDiv = document.createElement('div');
         nameDiv.className = 'project-name';
-        nameDiv.innerHTML = `<svg width="14" height="14" viewBox="0 0 16 16" fill="#656d76" style="vertical-align: text-bottom; margin-right: 4px;"><path d="M0 1.75C0 .784.784 0 1.75 0h12.5C15.216 0 16 .784 16 1.75v12.5A1.75 1.75 0 0 1 14.25 16H1.75A1.75 1.75 0 0 1 0 14.25ZM6.5 6.5v8h7.75a.25.25 0 0 0 .25-.25V6.5Zm8-1.5V1.75a.25.25 0 0 0-.25-.25H6.5V5Zm-13 1.5v7.75c0 .138.112.25.25.25H5v-8ZM5 5V1.5H1.75a.25.25 0 0 0-.25.25V5Z"/></svg>`;
+        nameDiv.innerHTML = '<svg width="14" height="14" viewBox="0 0 16 16" fill="#656d76"><path d="M0 1.75C0 .784.784 0 1.75 0h12.5C15.216 0 16 .784 16 1.75v12.5A1.75 1.75 0 0 1 14.25 16H1.75A1.75 1.75 0 0 1 0 14.25ZM6.5 6.5v8h7.75a.25.25 0 0 0 .25-.25V6.5Zm8-1.5V1.75a.25.25 0 0 0-.25-.25H6.5V5Zm-13 1.5v7.75c0 .138.112.25.25.25H5v-8ZM5 5V1.5H1.75a.25.25 0 0 0-.25.25V5Z"/></svg>';
         nameDiv.appendChild(document.createTextNode(proj.title));
         if (proj.org) {
           const orgBadge = document.createElement('span');
-          orgBadge.style.cssText = 'font-size:11px;color:#656d76;margin-left:6px;';
+          orgBadge.className = 'muted';
           orgBadge.textContent = proj.org;
           nameDiv.appendChild(orgBadge);
         }
@@ -248,14 +247,14 @@
         removeBtn.innerHTML = '<svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M3.72 3.72a.75.75 0 0 1 1.06 0L8 6.94l3.22-3.22a.749.749 0 0 1 1.275.326.749.749 0 0 1-.215.734L9.06 8l3.22 3.22a.749.749 0 0 1-.326 1.275.749.749 0 0 1-.734-.215L8 9.06l-3.22 3.22a.751.751 0 0 1-1.042-.018.751.751 0 0 1-.018-1.042L6.94 8 3.72 4.78a.75.75 0 0 1 0-1.06Z"/></svg>';
         removeBtn.addEventListener('click', () => {
           row.classList.add('project-row--removed');
-          removeBtn.style.display = 'none';
+          removeBtn.hidden = true;
           // Add undo button
           const undoBtn = document.createElement('button');
           undoBtn.className = 'project-undo';
           undoBtn.textContent = 'Undo';
           undoBtn.addEventListener('click', () => {
             row.classList.remove('project-row--removed');
-            removeBtn.style.display = '';
+            removeBtn.hidden = false;
             undoBtn.remove();
           });
           row.appendChild(undoBtn);
@@ -268,7 +267,7 @@
           undoBtn.textContent = 'Undo';
           undoBtn.addEventListener('click', () => {
             row.classList.remove('project-row--removed');
-            removeBtn.style.display = '';
+            removeBtn.hidden = false;
             undoBtn.remove();
           });
           row.appendChild(undoBtn);

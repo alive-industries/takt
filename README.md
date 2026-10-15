@@ -44,6 +44,8 @@ Do not put deployment-specific backend URLs or credentials in this repository.
 
 ```text
 extension/
+  assets/
+    fonts/                # Self-hosted Archivo variable font and OFL license
   background/
     handlers/             # Timer, session, GitHub, and admin actions
     local-store.js        # Local session cache
@@ -51,12 +53,12 @@ extension/
     sync-queue.js         # Durable extension outbox
     worker-shared.js      # Shared service-worker sync helpers
   content/                # GitHub page controls
+  dashboard/
+    dashboard.html        # Single-page dashboard shell and native views
+    dashboard.js          # Navigation, Clients view, and status
+    views/                 # Lazy-loaded Time, Settings, and Admin scripts
   lib/                    # Shared extension time and UI helpers
   popup/                  # Toolbar popup
-  dashboard/              # Dashboard
-  mytime/                 # Session history and CSV export
-  options/                # Connection and project settings
-  admin/                  # Client and member administration
 server/
   app/                    # FastAPI application, routes, and models
     services/store/       # PostgreSQL store modules

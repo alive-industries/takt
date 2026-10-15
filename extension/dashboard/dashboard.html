@@ -4,6 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Takt Dashboard</title>
+  <link rel="stylesheet" href="../lib/takt.css">
   <link rel="stylesheet" href="dashboard.css">
 </head>
 <body>
@@ -15,16 +16,16 @@
       </div>
       <nav>
         <button class="nav-item is-active" data-view="time">
-          <span class="nav-icon">◷</span><span>Time</span>
+          <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg></span><span>Time</span>
         </button>
         <button class="nav-item" data-view="clients" id="clients-nav" hidden>
-          <span class="nav-icon">◫</span><span>Clients</span>
+          <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 22V4a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v18Z"/><path d="M6 12H4a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2h2"/><path d="M18 9h2a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2h-2"/><path d="M10 6h4"/><path d="M10 10h4"/><path d="M10 14h4"/><path d="M10 18h4"/></svg></span><span>Clients</span>
         </button>
         <button class="nav-item" data-view="settings">
-          <span class="nav-icon">⚙</span><span>Settings</span>
+          <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg></span><span>Settings</span>
         </button>
         <button class="nav-item" data-view="admin" id="admin-nav" hidden>
-          <span class="nav-icon">◇</span><span>Admin</span>
+          <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/></svg></span><span>Admin</span>
         </button>
       </nav>
       <div class="sidebar-footer">
@@ -34,23 +35,95 @@
     </aside>
     <main>
       <header class="topbar">
-        <div><p class="eyebrow">Dashboard</p><h1 id="view-title">Time</h1></div>
+        <div><p class="eyebrow">Takt</p><h1 id="view-title">Time</h1></div>
         <div class="topbar-actions">
           <div class="bq-status" id="bq-status" hidden>
             <strong id="bq-status-title">Checking BigQuery…</strong>
             <span id="bq-status-detail"></span>
           </div>
-          <button class="bq-sync-button" id="bq-sync-button" hidden disabled>Push to BigQuery</button>
+          <button class="btn btn--dark btn--sm" id="bq-sync-button" hidden disabled>Push to BigQuery</button>
           <div class="sync-pill" id="sync-pill">Checking sync…</div>
         </div>
       </header>
       <section class="workspace">
-        <iframe id="workspace-frame" title="Takt Time" src="../mytime/mytime.html"></iframe>
-        <div class="clients-workspace" id="clients-workspace" hidden>
+        <section class="view" id="view-time" hidden>
+          <div class="toolbar view-toolbar">
+            <span id="source-pip" class="source-pip"><span class="dot"></span><span id="source-pip-text">loading…</span></span>
+            <button class="btn btn--primary" id="btn-add">
+              <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M7.75 2a.75.75 0 0 1 .75.75V7h4.25a.75.75 0 0 1 0 1.5H8.5v4.25a.75.75 0 0 1-1.5 0V8.5H2.75a.75.75 0 0 1 0-1.5H7V2.75A.75.75 0 0 1 7.75 2Z"/></svg>
+              Add entry
+            </button>
+            <button class="btn" id="btn-export">
+              <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M2.75 14A1.75 1.75 0 0 1 1 12.25v-2.5a.75.75 0 0 1 1.5 0v2.5c0 .138.112.25.25.25h10.5a.25.25 0 0 0 .25-.25v-2.5a.75.75 0 0 1 1.5 0v2.5A1.75 1.75 0 0 1 13.25 14ZM7.25 7.689V2a.75.75 0 0 1 1.5 0v5.689l1.97-1.969a.749.749 0 1 1 1.06 1.06l-3.25 3.25a.749.749 0 0 1-1.06 0L4.22 6.78a.749.749 0 1 1 1.06-1.06Z"/></svg>
+              Export CSV
+            </button>
+          </div>
+
+          <div class="active-timer-panel" id="active-timer" hidden>
+            <div class="active-timer-info">
+              <div class="active-timer-meta" id="active-timer-meta">Tracking</div>
+              <div class="active-timer-title" id="active-timer-title">—</div>
+            </div>
+            <div class="active-timer-clock" id="active-timer-clock">00:00:00</div>
+            <div class="active-timer-actions">
+              <button class="btn" id="active-timer-toggle">Pause</button>
+              <button class="btn btn--danger" id="active-timer-stop">Stop</button>
+            </div>
+          </div>
+
+          <div class="toolbar filters">
+            <label class="field field--inline" id="admin-user-filter-wrap" hidden>
+              <span>User</span>
+              <select id="filter-user"><option value="">My time</option></select>
+            </label>
+            <label class="field field--inline">
+              <span>Context</span>
+              <select id="filter-repo"><option value="">All contexts</option></select>
+            </label>
+            <label class="field field--inline">
+              <span>From</span>
+              <input type="date" id="filter-from">
+            </label>
+            <label class="field field--inline">
+              <span>To</span>
+              <input type="date" id="filter-to">
+            </label>
+          </div>
+
+          <div class="stats">
+            <div class="stat">
+              <div class="stat-label">Total entries</div>
+              <div class="stat-value" id="summary-count">0</div>
+            </div>
+            <div class="stat">
+              <div class="stat-label">Total hours</div>
+              <div class="stat-value" id="summary-hours">0.00</div>
+            </div>
+          </div>
+
+          <div class="table-wrap">
+            <table class="table">
+              <thead>
+                <tr>
+                  <th>Date</th>
+                  <th>Project</th>
+                  <th>Issue</th>
+                  <th>Duration</th>
+                  <th>Hours</th>
+                  <th>Sync</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody id="sessions-body"></tbody>
+            </table>
+          </div>
+        </section>
+
+        <section class="view clients-workspace" id="view-clients" hidden>
           <aside class="clients-panel">
             <div class="panel-heading">
               <div><p class="eyebrow">Reporting structure</p><h2>Clients</h2></div>
-              <button class="icon-button" id="new-client-button" title="Create client">＋</button>
+              <button class="icon-btn" id="new-client-button" title="Create client"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></button>
             </div>
             <form class="new-client-form" id="new-client-form" hidden>
               <label for="new-client-name">Client name</label>
@@ -65,11 +138,233 @@
               <p>Choose a client to manage its GitHub projects and repository mappings.</p>
             </div>
           </section>
-        </div>
+        </section>
+
+        <section class="view" id="view-settings" hidden>
+          <div class="card">
+            <h2 class="card-title">Connection</h2>
+            <div class="field">
+              <label for="pat">Personal Access Token (classic)</label>
+              <div class="hint">
+                <a href="https://github.com/settings/tokens/new?scopes=repo,project,read:org&amp;description=Takt%20time%20tracker" target="_blank">Create a classic PAT</a>
+                with <code>repo</code>, <code>project</code>, and <code>read:org</code> scopes.<br>
+                <span class="muted">Note:</span> GitHub Projects v2 requires a classic PAT — fine-grained tokens
+                don't yet support project field mutations. <code>read:org</code> is needed for backend org-membership checks.
+              </div>
+              <input type="password" id="pat" placeholder="ghp_xxxxxxxxxxxxxxxxxxxx" autocomplete="off">
+            </div>
+
+            <div class="field">
+              <label for="backend-url">Takt backend URL</label>
+              <div class="hint">
+                Where time records are pushed. Defaults to localhost for development.
+                <span id="backend-status-pip"></span>
+              </div>
+              <input type="text" id="backend-url" placeholder="http://localhost:8000" autocomplete="off">
+            </div>
+
+            <div class="field">
+              <label for="api-key">Takt API key</label>
+              <div class="hint">Shared key required by deployed backends. Leave blank for local dev.</div>
+              <input type="password" id="api-key" placeholder="optional for localhost" autocomplete="off">
+            </div>
+
+
+            <div class="field" id="admin-link-field" hidden>
+              <a href="#" id="admin-link">Open Admin (members &amp; org config) &rarr;</a>
+            </div>
+
+            <div class="toolbar">
+              <button class="btn btn--primary" id="btn-save-backend">Save backend settings</button>
+              <button class="btn" id="btn-validate">Connect &amp; Fetch Projects</button>
+              <span class="status" id="backend-save-status"></span>
+              <span class="status" id="status"></span>
+            </div>
+          </div>
+
+          <div class="card projects-section" id="projects-section" hidden>
+            <h2 class="card-title">Project Field Mapping</h2>
+            <p class="hint">Choose which Number field Takt writes tracked time to on each project. "Use default" falls back to the default field below.</p>
+            <div class="field field-row default-field">
+              <label for="default-field">Default time field</label>
+              <select id="default-field"></select>
+            </div>
+            <div id="projects-list"></div>
+            <div class="toolbar">
+              <button class="btn btn--primary" id="btn-save-fields">Save Field Settings</button>
+              <span class="status" id="fields-status"></span>
+            </div>
+          </div>
+        </section>
+
+        <section class="view" id="view-admin" hidden>
+          <div class="callout callout--error" id="gate" hidden></div>
+
+          <div class="card" id="members-card" hidden>
+            <h2 class="card-title">Members</h2>
+            <p class="hint">Members granted access to push time records. GitHub org members of <strong id="org-label">your org</strong> are auto-admitted.</p>
+            <div class="toolbar">
+              <input type="text" id="new-login" placeholder="github_login" autocomplete="off">
+              <select id="new-role">
+                <option value="member">member</option>
+                <option value="admin">admin</option>
+              </select>
+              <button class="btn btn--primary" id="btn-add-member">Add / Update</button>
+              <span class="status" id="add-status"></span>
+            </div>
+            <div class="table-wrap">
+              <table class="table" id="members-table">
+                <thead>
+                  <tr>
+                    <th>Login</th>
+                    <th>Role</th>
+                    <th>Status</th>
+                    <th>Source</th>
+                    <th>Added</th>
+                    <th>Actions</th>
+                  </tr>
+                </thead>
+                <tbody id="members-tbody"></tbody>
+              </table>
+            </div>
+          </div>
+
+          <div class="card" id="config-card" hidden>
+            <h2 class="card-title">Org config</h2>
+            <p class="hint">
+              Shared configuration that applies to every member of your org. Saved to the backend and read by
+              members on connect.
+            </p>
+
+            <div class="field">
+              <label for="default-field-input">Default field name</label>
+              <p class="hint">
+                The Number field on each project that Takt writes tracked time to (e.g. <code>Actual Hours</code>, <code>Actual</code>, <code>Time Spent</code>).
+              </p>
+              <input type="text" id="default-field-input" placeholder="Actual Hours">
+            </div>
+
+            <div class="field">
+              <label>Excluded projects</label>
+              <p class="hint">
+                Tick projects to exclude from time tracking. Only org projects are listed (personal projects are never tracked).
+                <span id="projects-meta" class="muted"></span>
+              </p>
+              <div id="excluded-projects-list" class="stack">
+                <div class="muted">Loading projects…</div>
+              </div>
+            </div>
+
+            <div class="toolbar">
+              <button class="btn btn--primary" id="btn-save-config">Save</button>
+              <button class="btn" id="btn-refresh-config">Refresh from backend</button>
+              <span class="status" id="config-status"></span>
+            </div>
+          </div>
+        </section>
       </section>
       <div class="toast" id="dashboard-toast" hidden></div>
     </main>
   </div>
+  <div class="modal-overlay" id="add-modal" hidden>
+    <div class="modal" role="dialog" aria-labelledby="add-modal-title">
+      <div class="modal-header">
+        <h2 id="add-modal-title">Add time entry</h2>
+        <button class="icon-btn" id="add-close" aria-label="Close">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="field">
+          <label for="add-mode">Entry type</label>
+          <select id="add-mode">
+            <option value="delivery">Delivery</option>
+            <option value="ops">Ops</option>
+          </select>
+        </div>
+        <div class="field" id="add-member-row" hidden>
+          <label for="add-member">Record historical entry for</label>
+          <select id="add-member"></select>
+          <div class="hint">Live timers are always attributed to you.</div>
+        </div>
+        <div class="field">
+          <label for="add-client">Client</label>
+          <select id="add-client"><option value="">Loading clients…</option></select>
+        </div>
+        <div id="add-github-fields">
+          <div class="field">
+            <label for="add-project">Project <span class="muted">(required)</span></label>
+            <select id="add-project" disabled>
+              <option value="">Pick a client first</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="add-repo">Repository <span class="muted">(optional — for code-related work)</span></label>
+            <select id="add-repo" disabled>
+              <option value="">Pick a project first</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="add-issue-select">Issue <span class="muted">(optional)</span></label>
+            <select id="add-issue-select" disabled>
+              <option value="">Pick a project first</option>
+            </select>
+          </div>
+        </div>
+        <div class="field">
+          <label for="add-title">Title <span class="muted" id="add-title-hint">(autofilled from the issue)</span></label>
+          <input type="text" id="add-title" placeholder="What you worked on" autocomplete="off">
+        </div>
+        <div class="field-row">
+          <div class="field">
+            <label for="add-date">Date</label>
+            <input type="date" id="add-date">
+          </div>
+          <div class="field">
+            <label for="add-duration">Duration</label>
+            <input type="text" id="add-duration" class="mono" placeholder="HH:MM:SS">
+          </div>
+        </div>
+        <div class="callout callout--error" id="add-error" hidden></div>
+      </div>
+      <div class="modal-actions">
+        <button class="btn btn--ghost" id="add-cancel">Cancel</button>
+        <button class="btn btn--dark" id="add-start" title="Start a live timer with these details (ignores Date / Duration)">
+          <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor"><path d="M4.25 3a.75.75 0 0 1 1.143-.638l7.5 4.75a.75.75 0 0 1 0 1.276l-7.5 4.75A.75.75 0 0 1 4.25 13Z"/></svg>
+          Start tracking
+        </button>
+        <button class="btn btn--primary" id="add-submit">Add entry</button>
+      </div>
+    </div>
+  </div>
+  <div class="modal-overlay" id="member-modal" hidden>
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="member-modal-title">
+      <div class="modal-header">
+        <h2 id="member-modal-title">Edit member</h2>
+        <p id="member-modal-login"></p>
+      </div>
+      <div class="modal-body">
+        <div class="field">
+          <label for="member-modal-role">Role</label>
+          <select id="member-modal-role">
+            <option value="member">Member</option>
+            <option value="admin">Admin</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="member-modal-status">Access</label>
+          <select id="member-modal-status">
+            <option value="active">Active</option>
+            <option value="pending">Pending</option>
+            <option value="revoked">Revoked</option>
+          </select>
+        </div>
+      </div>
+      <div class="modal-actions">
+        <button class="btn" id="member-modal-cancel">Cancel</button>
+        <button class="btn btn--primary" id="member-modal-save">Save changes</button>
+      </div>
+    </div>
+  </div>
+  <script src="../lib/time-format.js"></script>
   <script src="../lib/ui.js"></script>
   <script src="dashboard.js"></script>
 </body>

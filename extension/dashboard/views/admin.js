@@ -1,7 +1,7 @@
-// Takt admin page — gated on /v1/me reporting role=admin.
+// Takt admin view — gated on /v1/me reporting role=admin.
 //
 // All backend calls go through the service worker so the PAT and backend URL
-// stay in one place. The admin.html UI is intentionally simple — there is no
+// stay in one place. The admin UI is intentionally simple — there is no
 // per-row delete; we set status=revoked instead so the audit trail stays.
 
 (() => {
@@ -10,22 +10,11 @@
   const gateEl = document.getElementById('gate');
   const membersCard = document.getElementById('members-card');
   const configCard = document.getElementById('config-card');
-  const clientsCard = document.getElementById('clients-card');
-  const newClientName = document.getElementById('new-client-name');
-  const btnAddClient = document.getElementById('btn-add-client');
-  const mapClient = document.getElementById('map-client');
-  const mapProject = document.getElementById('map-project');
-  const btnMapProject = document.getElementById('btn-map-project');
-  const mapProjectRepo = document.getElementById('map-project-repo');
-  const mapRepo = document.getElementById('map-repo');
-  const btnMapRepo = document.getElementById('btn-map-repo');
-  const clientStatus = document.getElementById('client-status');
-  const clientsTbody = document.getElementById('clients-tbody');
   const orgLabel = document.getElementById('org-label');
 
   const newLoginInput = document.getElementById('new-login');
   const newRoleSelect = document.getElementById('new-role');
-  const btnAdd = document.getElementById('btn-add');
+  const btnAdd = document.getElementById('btn-add-member');
   const addStatus = document.getElementById('add-status');
   const tbody = document.getElementById('members-tbody');
   const memberModal = document.getElementById('member-modal');
@@ -42,14 +31,10 @@
   const btnRefreshConfig = document.getElementById('btn-refresh-config');
   const configStatus = document.getElementById('config-status');
   const escapeHtml = self.TaktUI.escapeHtml;
-  const showStatus = (element, text, type) =>
-    self.TaktUI.showStatus(element, text, type, 'status');
-
-  const backLink = document.getElementById('back-link');
-  backLink.addEventListener('click', (e) => {
-    e.preventDefault();
-    window.top.location.href = chrome.runtime.getURL('dashboard/dashboard.html#settings');
-  });
+  const showStatus = (element, text, type) => {
+    const statusType = { success: 'ok', loading: 'warn' }[type] || type;
+    self.TaktUI.showStatus(element, text, statusType, 'status');
+  };
 
   function send(action, payload = {}) {
     return chrome.runtime.sendMessage({ action, payload });
@@ -60,13 +45,13 @@
   async function checkAccess() {
     const ping = await send('BACKEND_PING');
     if (!ping?.ok) {
-      gateEl.classList.add('visible');
+      gateEl.hidden = false;
       gateEl.textContent = `Backend unreachable: ${ping?.error?.message || 'unknown error'}. Configure your PAT in Settings.`;
       return false;
     }
     const me = ping.me || {};
     if (me.role !== 'admin') {
-      gateEl.classList.add('visible');
+      gateEl.hidden = false;
       gateEl.textContent = `Access denied. You are signed in as ${me.login} (role: ${me.role}). Only admins can view this page.`;
       return false;
     }
@@ -84,9 +69,10 @@
     for (const m of members) {
       const tr = document.createElement('tr');
       tr.dataset.login = m.github_login;
-      const roleBadge = `<span class="badge badge--${m.role}">${m.role}</span>`;
-      const statusBadge = `<span class="badge badge--${m.status}">${m.status}</span>`;
-      const sourceBadge = `<span class="badge badge--${m.source === 'org' ? 'org' : 'manual'}">${m.source}</span>`;
+      const roleBadge = `<span class="chip chip--${m.role === 'admin' ? 'info' : 'muted'}">${m.role}</span>`;
+      const statusTone = { active: 'ok', pending: 'warn', revoked: 'error' }[m.status] || 'muted';
+      const statusBadge = `<span class="chip chip--${statusTone}">${m.status}</span>`;
+      const sourceBadge = `<span class="chip chip--${m.source === 'org' ? 'info' : 'muted'}">${m.source}</span>`;
       tr.innerHTML = `
         <td><strong title="${escapeHtml(m.github_login)}">${escapeHtml(m.github_login)}</strong></td>
         <td>${roleBadge}</td>
@@ -94,7 +80,7 @@
         <td>${sourceBadge}</td>
         <td class="muted">${self.TaktUI.formatDate(m.added_at)}</td>
         <td class="actions-cell"><div class="member-actions">
-          <button class="btn btn--secondary" data-act="edit">Edit</button>
+          <button class="btn" data-act="edit">Edit</button>
         </div></td>
       `;
       tbody.appendChild(tr);
@@ -180,101 +166,6 @@
     btnAdd.disabled = false;
   });
 
-  // --- Clients ---
-
-  let adminClients = [];
-  let githubProjects = [];
-
-  function renderClientMappings() {
-    mapClient.innerHTML = adminClients
-      .map((client) => `<option value="${client.client_id}">${escapeHtml(client.name)}</option>`)
-      .join('');
-    const mappedProjects = adminClients.flatMap((client) =>
-      (client.projects || []).map((project) => ({ ...project, clientId: client.client_id }))
-    );
-    mapProjectRepo.innerHTML = '<option value="">Select mapped project…</option>' +
-      mappedProjects.map((project) =>
-        `<option value="${project.clientId}|${escapeHtml(project.project_id)}">${escapeHtml(project.title)}</option>`
-      ).join('');
-    clientsTbody.innerHTML = adminClients.map((client) => {
-      const projects = (client.projects || []).map((project) =>
-        `<div><strong>${escapeHtml(project.title)}</strong><div class="muted">${escapeHtml((project.repositories || []).join(', ') || 'No repositories')}</div></div>`
-      ).join('') || '—';
-      return `<tr><td><strong>${escapeHtml(client.name)}</strong></td><td>${projects}</td></tr>`;
-    }).join('');
-  }
-
-  async function loadClients() {
-    const resp = await send('LIST_CLIENTS');
-    if (!resp?.ok) {
-      showStatus(clientStatus, resp?.error?.message || 'Failed to load clients', 'error');
-      return;
-    }
-    adminClients = resp.clients || [];
-    renderClientMappings();
-    const { settings = {} } = await chrome.storage.local.get('settings');
-    if (!settings.pat) return;
-    const projectsResp = await send('FETCH_ALL_PROJECTS', { pat: settings.pat });
-    githubProjects = projectsResp?.projects || [];
-    mapProject.innerHTML = '<option value="">Select GitHub project…</option>' +
-      githubProjects.map((project) =>
-        `<option value="${escapeHtml(project.id)}">${escapeHtml(project.title)}${project.org ? ` · ${escapeHtml(project.org)}` : ''}</option>`
-      ).join('');
-  }
-
-  btnAddClient.addEventListener('click', async () => {
-    const name = newClientName.value.trim();
-    if (!name) return;
-    const resp = await send('ADMIN_CREATE_CLIENT', { name });
-    if (!resp?.ok) {
-      showStatus(clientStatus, resp?.error?.message || 'Failed to create client', 'error');
-      return;
-    }
-    newClientName.value = '';
-    showStatus(clientStatus, 'Client saved', 'success');
-    await loadClients();
-  });
-
-  btnMapProject.addEventListener('click', async () => {
-    const clientId = Number(mapClient.value);
-    const project = githubProjects.find((item) => item.id === mapProject.value);
-    if (!clientId || !project) return;
-    const resp = await send('ADMIN_MAP_CLIENT_PROJECT', {
-      clientId,
-      project: { project_id: project.id, title: project.title, org: project.org || null },
-    });
-    if (!resp?.ok) {
-      showStatus(clientStatus, resp?.error?.message || 'Failed to map project', 'error');
-      return;
-    }
-    showStatus(clientStatus, 'Project mapped to client', 'success');
-    await loadClients();
-  });
-
-  mapProjectRepo.addEventListener('change', async () => {
-    const [, projectId] = mapProjectRepo.value.split('|');
-    if (!projectId) return;
-    mapRepo.innerHTML = '<option value="">Loading repositories…</option>';
-    const resp = await send('FETCH_PROJECT_REPOS', { projectId });
-    mapRepo.innerHTML = '<option value="">Select GitHub repository…</option>' +
-      (resp?.repos || []).map((repo) => `<option value="${escapeHtml(repo)}">${escapeHtml(repo)}</option>`).join('');
-  });
-
-  btnMapRepo.addEventListener('click', async () => {
-    const [clientId, projectId] = mapProjectRepo.value.split('|');
-    const repo = mapRepo.value;
-    if (!clientId || !projectId || !repo) return;
-    const resp = await send('ADMIN_MAP_PROJECT_REPO', {
-      clientId: Number(clientId), projectId, repo,
-    });
-    if (!resp?.ok) {
-      showStatus(clientStatus, resp?.error?.message || 'Failed to map repository', 'error');
-      return;
-    }
-    showStatus(clientStatus, 'Repository mapped to project', 'success');
-    await loadClients();
-  });
-
   // --- Org config ---
 
   // Cached so Save can rebuild the excluded list (keyed by stable project id)
@@ -289,7 +180,7 @@
     // already-excluded titles as toggleable rows so admins can un-exclude.
     if (orgProjects.length === 0 && excluded.size === 0) {
       excludedListEl.innerHTML =
-        '<div class="muted" style="padding:10px;">No org projects found. Make sure your PAT has the <code>project</code> and <code>read:org</code> scopes.</div>';
+        '<div class="muted">No org projects found. Make sure your PAT has the <code>project</code> and <code>read:org</code> scopes.</div>';
       return;
     }
 
@@ -307,19 +198,19 @@
     for (const p of orgProjects) {
       const checked = excluded.has(p.id) || excluded.has(p.title) ? 'checked' : '';
       rows.push(`
-        <label style="display:flex;align-items:center;gap:8px;padding:6px 12px;border-bottom:1px solid #eaeef2;cursor:pointer;">
+        <label class="field field--inline">
           <input type="checkbox" class="excl-cb" data-id="${escapeHtml(p.id)}" ${checked}>
-          <span style="flex:1;">${escapeHtml(p.title)}</span>
-          <span class="muted" style="font-size:11px;">${escapeHtml(p.org || '')}</span>
+          <span>${escapeHtml(p.title)}</span>
+          <span class="muted">${escapeHtml(p.org || '')}</span>
         </label>
       `);
     }
     for (const t of orphanExcluded) {
       rows.push(`
-        <label style="display:flex;align-items:center;gap:8px;padding:6px 12px;border-bottom:1px solid #eaeef2;cursor:pointer;opacity:0.7;">
+        <label class="field field--inline">
           <input type="checkbox" class="excl-cb" data-id="${escapeHtml(t)}" checked>
-          <span style="flex:1;">${escapeHtml(t)}</span>
-          <span class="muted" style="font-size:11px;">not currently visible</span>
+          <span>${escapeHtml(t)}</span>
+          <span class="muted">not currently visible</span>
         </label>
       `);
     }
@@ -396,9 +287,8 @@
   (async () => {
     const ok = await checkAccess();
     if (!ok) return;
-    membersCard.style.display = '';
-    clientsCard.style.display = 'none';
-    configCard.style.display = '';
+    membersCard.hidden = false;
+    configCard.hidden = false;
     await Promise.all([
       loadMembers(),
       loadBackendConfig(),
