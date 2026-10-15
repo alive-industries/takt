@@ -90,11 +90,11 @@
       }
       .takt-btn:hover { background: var(--bgColor-muted, #f6f8fa); }
       .takt-btn--running {
-        border-color: var(--borderColor-accent-emphasis, #0969da);
-        color: var(--fgColor-accent, #0969da);
-        background: var(--bgColor-accent-muted, #ddf4ff);
+        border-color: #007856;
+        color: #005f44;
+        background: #e6f5ef;
       }
-      .takt-btn--running:hover { background: #b6e3ff; }
+      .takt-btn--running:hover { background: #cfeee2; }
       .takt-btn--paused {
         border-color: var(--borderColor-attention-emphasis, #bf8700);
         color: var(--fgColor-attention, #9a6700);

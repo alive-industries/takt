@@ -52,15 +52,13 @@
       ? `Needs reporting details — ${baseContext}`
       : baseContext;
     activeSection.innerHTML = `
-      <div class="active">
+      <div class="active${isRunning ? '' : ' active--paused'}">
         <div class="active-repo">${escapeHtml(contextLabel || '')}</div>
         <div class="active-issue">${issueLabel}</div>
         <div class="active-timer ${timerClass}" id="timer-display">${formatElapsed(elapsed)}</div>
         <div class="active-controls">
-          <button class="btn btn--primary" id="btn-toggle">
-            ${isRunning ? '\u23F8 Pause' : '\u25B6 Resume'}
-          </button>
-          <button class="btn btn--danger" id="btn-stop">\u25A0 Stop</button>
+          <button class="btn btn--primary btn--sm" id="btn-toggle">${isRunning ? 'Pause' : 'Resume'}</button>
+          <button class="btn btn--danger btn--sm" id="btn-stop">Stop</button>
         </div>
       </div>
     `;
@@ -92,7 +90,7 @@
   function renderSessions(sessions) {
     if (!sessions || sessions.length === 0) {
       sessionsList.innerHTML =
-        '<li style="color:#656d76">No sessions yet</li>';
+        '<li class="empty">No sessions yet</li>';
       return;
     }
 
@@ -105,7 +103,7 @@
         <li>
           <div class="session-row">
             <span class="session-ref">${ref}</span>
-            <button class="btn btn--resume" data-resume="${escapeHtml(session.sessionId)}"${currentSession ? ' disabled' : ''}>Resume</button>
+            <button class="btn btn--sm btn--resume" data-resume="${escapeHtml(session.sessionId)}"${currentSession ? ' disabled' : ''}>Resume</button>
           </div>
           <div class="session-duration">${formatDuration(session.durationMs)} &middot; ${formatRelative(session.completedAt)}</div>
         </li>`;
@@ -185,25 +183,39 @@
       sendMessage('BACKEND_PING'),
       sendMessage('QUEUE_STATUS'),
     ]);
-    const dot = (color) =>
-      `<span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:${color};margin-right:4px;vertical-align:middle;"></span>`;
     const failed = queue?.failed?.length || 0;
+    let variant = 'ok';
+    let text = 'Synced';
     if (failed > 0) {
-      el.innerHTML = `${dot('#d1242f')}${failed} failed to sync <button class="sync-retry" id="retry-failed">Retry</button>`;
-      document.getElementById('retry-failed').addEventListener('click', async (event) => {
-        event.currentTarget.disabled = true;
+      variant = 'error';
+      text = `${failed} failed to sync`;
+    } else if (queue?.authBlocked) {
+      variant = 'warn';
+      text = 'Sync paused — check token';
+    } else if ((queue?.pending || 0) > 0) {
+      variant = 'warn';
+      text = `${queue.pending} pending`;
+    } else if (!ping?.ok) {
+      variant = 'error';
+      text = 'Offline';
+    }
+    const chip = document.createElement('span');
+    chip.className = `chip chip--${variant}`;
+    const dotEl = document.createElement('span');
+    dotEl.className = 'chip-dot';
+    chip.append(dotEl, text);
+    if (failed > 0) {
+      const retry = document.createElement('button');
+      retry.className = 'sync-retry';
+      retry.textContent = 'Retry';
+      retry.addEventListener('click', async () => {
+        retry.disabled = true;
         await sendMessage('RETRY_FAILED');
         refreshSyncStatus();
       });
-    } else if (queue?.authBlocked) {
-      el.innerHTML = dot('#bf8700') + 'Sync paused — check GitHub token';
-    } else if ((queue?.pending || 0) > 0) {
-      el.innerHTML = dot('#bf8700') + `${queue.pending} pending`;
-    } else if (ping?.ok) {
-      el.innerHTML = dot('#1a7f37') + 'synced';
-    } else {
-      el.innerHTML = dot('#d1242f') + 'offline';
+      chip.append(retry);
     }
+    el.replaceChildren(chip);
   }
 
   function init() {
