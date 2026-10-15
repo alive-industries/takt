@@ -1,0 +1,57 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - staging
+
+permissions:
+  contents: read
+
+jobs:
+  extension:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Check JavaScript syntax
+        run: find extension -name '*.js' -print0 | xargs -0 -n1 node --check
+      - name: Run extension tests
+        run: npm run test:ext
+
+  server:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: takt
+          POSTGRES_USER: takt
+          POSTGRES_PASSWORD: takt
+        ports:
+          - 55432:5432
+        options: >-
+          --health-cmd "pg_isready -U takt -d takt"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.13"
+          enable-cache: true
+          cache-dependency-glob: server/uv.lock
+      - name: Install server dependencies
+        working-directory: server
+        run: uv sync
+      - name: Run Ruff
+        working-directory: server
+        run: uv run ruff check .
+      - name: Run server tests
+        working-directory: server
+        run: uv run pytest
