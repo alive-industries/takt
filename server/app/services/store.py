@@ -783,7 +783,7 @@ def total_hours_for_issue(repo: str, issue_number: int) -> float:
     with transaction() as db:
         total = db.scalar(
             select(func.coalesce(func.sum(SessionRow.duration_ms), 0)).where(
-                SessionRow.repo == repo,
+                func.lower(SessionRow.repo) == repo.lower(),
                 SessionRow.issue_number == issue_number,
                 SessionRow.deleted_at.is_(None),
             )
