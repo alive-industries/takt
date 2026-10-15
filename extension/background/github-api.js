@@ -1,4 +1,5 @@
 const GITHUB_GRAPHQL = 'https://api.github.com/graphql';
+const MAX_PAGES = 20;
 
 // --- GraphQL helper ---
 
@@ -26,30 +27,44 @@ async function graphql(pat, query, variables = {}) {
 // --- Discovery queries (used by options page via service worker) ---
 
 export async function fetchUserOrgs(pat) {
-  const resp = await fetch('https://api.github.com/user/orgs?per_page=100', {
-    headers: {
-      Authorization: `Bearer ${pat}`,
-      Accept: 'application/vnd.github+json',
-    },
-  });
-  if (!resp.ok) throw new Error(`Failed to fetch orgs: ${resp.status}`);
-  const orgs = await resp.json();
-  return orgs.map((o) => o.login);
+  const orgs = [];
+  for (let page = 1; page <= MAX_PAGES; page++) {
+    const resp = await fetch(`https://api.github.com/user/orgs?per_page=100&page=${page}`, {
+      headers: {
+        Authorization: `Bearer ${pat}`,
+        Accept: 'application/vnd.github+json',
+      },
+    });
+    if (!resp.ok) throw new Error(`Failed to fetch orgs: ${resp.status}`);
+    const pageOrgs = await resp.json();
+    orgs.push(...pageOrgs.map((o) => o.login));
+    if (pageOrgs.length < 100) break;
+  }
+  return orgs;
 }
 
 export async function fetchOrgProjects(pat, org) {
-  const data = await graphql(
-    pat,
-    `query ($org: String!) {
-      organization(login: $org) {
-        projectsV2(first: 50, orderBy: { field: UPDATED_AT, direction: DESC }) {
-          nodes { id title }
+  const projects = [];
+  let cursor = null;
+  for (let page = 0; page < MAX_PAGES; page++) {
+    const data = await graphql(
+      pat,
+      `query ($org: String!, $cursor: String) {
+        organization(login: $org) {
+          projectsV2(first: 50, after: $cursor, orderBy: { field: UPDATED_AT, direction: DESC }) {
+            nodes { id title }
+            pageInfo { hasNextPage endCursor }
+          }
         }
-      }
-    }`,
-    { org }
-  );
-  return data.organization.projectsV2.nodes.map((p) => ({ ...p, org }));
+      }`,
+      { org, cursor }
+    );
+    const connection = data.organization.projectsV2;
+    projects.push(...connection.nodes);
+    if (!connection.pageInfo.hasNextPage) break;
+    cursor = connection.pageInfo.endCursor;
+  }
+  return projects.map((project) => ({ ...project, org }));
 }
 
 export async function fetchAllProjects(pat) {
@@ -78,7 +93,7 @@ export const TAKT_ORG = 'alive-industries';
 export async function fetchOrgRepos(pat, org = TAKT_ORG) {
   const repos = [];
   let cursor = null;
-  for (let page = 0; page < 4; page++) {
+  for (let page = 0; page < MAX_PAGES; page++) {
     const data = await graphql(
       pat,
       `query ($org: String!, $cursor: String) {
@@ -112,18 +127,28 @@ export const fetchUserRepos = (pat) => fetchOrgRepos(pat);
 // projects. The "Add entry" cascading dropdown calls this when the user
 // picks a repo.
 export async function fetchRepoProjects(pat, owner, name) {
-  const data = await graphql(
-    pat,
-    `query ($owner: String!, $name: String!) {
-      repository(owner: $owner, name: $name) {
-        projectsV2(first: 30, orderBy: { field: UPDATED_AT, direction: DESC }) {
-          nodes { id title number closed }
+  const projects = [];
+  let cursor = null;
+  for (let page = 0; page < MAX_PAGES; page++) {
+    const data = await graphql(
+      pat,
+      `query ($owner: String!, $name: String!, $cursor: String) {
+        repository(owner: $owner, name: $name) {
+          projectsV2(first: 50, after: $cursor, orderBy: { field: UPDATED_AT, direction: DESC }) {
+            nodes { id title number closed }
+            pageInfo { hasNextPage endCursor }
+          }
         }
-      }
-    }`,
-    { owner, name }
-  );
-  return (data.repository?.projectsV2?.nodes || []).filter((p) => !p.closed);
+      }`,
+      { owner, name, cursor }
+    );
+    const connection = data.repository?.projectsV2;
+    if (!connection) break;
+    projects.push(...connection.nodes);
+    if (!connection.pageInfo.hasNextPage) break;
+    cursor = connection.pageInfo.endCursor;
+  }
+  return projects.filter((project) => !project.closed);
 }
 
 // List issue items in a Project v2. Filters server-side to OPEN issues
@@ -133,7 +158,7 @@ export async function fetchRepoProjects(pat, owner, name) {
 export async function fetchProjectIssues(pat, projectId, repoFilter = null) {
   const items = [];
   let cursor = null;
-  for (let page = 0; page < 3; page++) {
+  for (let page = 0; page < MAX_PAGES; page++) {
     const data = await graphql(
       pat,
       `query ($projectId: ID!, $cursor: String) {
@@ -179,72 +204,97 @@ export async function fetchProjectIssues(pat, projectId, repoFilter = null) {
 }
 
 export async function fetchProjectNumberFields(pat, projectId) {
-  const data = await graphql(
-    pat,
-    `query ($projectId: ID!) {
-      node(id: $projectId) {
-        ... on ProjectV2 {
-          fields(first: 50) {
-            nodes {
-              ... on ProjectV2FieldCommon {
-                id
-                name
-                dataType
+  const fields = [];
+  let cursor = null;
+  for (let page = 0; page < MAX_PAGES; page++) {
+    const data = await graphql(
+      pat,
+      `query ($projectId: ID!, $cursor: String) {
+        node(id: $projectId) {
+          ... on ProjectV2 {
+            fields(first: 50, after: $cursor) {
+              nodes {
+                ... on ProjectV2FieldCommon {
+                  id
+                  name
+                  dataType
+                }
               }
+              pageInfo { hasNextPage endCursor }
             }
           }
         }
-      }
-    }`,
-    { projectId }
-  );
-  return data.node.fields.nodes.filter((f) => f.dataType === 'NUMBER');
+      }`,
+      { projectId, cursor }
+    );
+    const connection = data.node.fields;
+    fields.push(...connection.nodes);
+    if (!connection.pageInfo.hasNextPage) break;
+    cursor = connection.pageInfo.endCursor;
+  }
+  return fields.filter((field) => field.dataType === 'NUMBER');
 }
 
 // --- Issue sync queries ---
 
 async function getIssueProjectItems(pat, owner, repo, issueNumber) {
-  const data = await graphql(
-    pat,
-    `query ($owner: String!, $repo: String!, $number: Int!) {
-      repository(owner: $owner, name: $repo) {
-        issue(number: $number) {
-          projectItems(first: 10) {
-            nodes {
-              id
-              project { id title }
+  const items = [];
+  let cursor = null;
+  for (let page = 0; page < MAX_PAGES; page++) {
+    const data = await graphql(
+      pat,
+      `query ($owner: String!, $repo: String!, $number: Int!, $cursor: String) {
+        repository(owner: $owner, name: $repo) {
+          issue(number: $number) {
+            projectItems(first: 50, after: $cursor) {
+              nodes {
+                id
+                project { id title }
+              }
+              pageInfo { hasNextPage endCursor }
             }
           }
         }
-      }
-    }`,
-    { owner, repo, number: issueNumber }
-  );
-  return data.repository.issue.projectItems.nodes;
+      }`,
+      { owner, repo, number: issueNumber, cursor }
+    );
+    const connection = data.repository.issue.projectItems;
+    items.push(...connection.nodes);
+    if (!connection.pageInfo.hasNextPage) break;
+    cursor = connection.pageInfo.endCursor;
+  }
+  return items;
 }
 
 async function getProjectField(pat, projectId, fieldName) {
-  const data = await graphql(
-    pat,
-    `query ($projectId: ID!) {
-      node(id: $projectId) {
-        ... on ProjectV2 {
-          fields(first: 50) {
-            nodes {
-              ... on ProjectV2FieldCommon { id name dataType }
+  const fields = [];
+  let cursor = null;
+  for (let page = 0; page < MAX_PAGES; page++) {
+    const data = await graphql(
+      pat,
+      `query ($projectId: ID!, $cursor: String) {
+        node(id: $projectId) {
+          ... on ProjectV2 {
+            fields(first: 50, after: $cursor) {
+              nodes {
+                ... on ProjectV2FieldCommon { id name dataType }
+              }
+              pageInfo { hasNextPage endCursor }
             }
           }
         }
-      }
-    }`,
-    { projectId }
-  );
-  return data.node.fields.nodes.find(
-    (f) => f.name === fieldName && f.dataType === 'NUMBER'
-  );
+      }`,
+      { projectId, cursor }
+    );
+    const connection = data.node.fields;
+    fields.push(...connection.nodes);
+    if (!connection.pageInfo.hasNextPage) break;
+    cursor = connection.pageInfo.endCursor;
+  }
+  return fields.find((field) => field.name === fieldName && field.dataType === 'NUMBER');
 }
 
-async function updateTrackedTime(pat, projectId, itemId, fieldId, totalMinutes) {
+async function updateTrackedTime(pat, projectId, itemId, fieldId, totalHours) {
   await graphql(
     pat,
     `mutation ($projectId: ID!, $itemId: ID!, $fieldId: ID!, $value: Float!) {
@@ -257,14 +307,23 @@ async function updateTrackedTime(pat, projectId, itemId, fieldId, totalMinutes) 
         projectV2Item { id }
       }
     }`,
-    { projectId, itemId, fieldId, value: totalMinutes }
+    { projectId, itemId, fieldId, value: totalHours }
   );
 }
 
 // --- Issue comment ---
 
-export async function postTimeComment(pat, owner, repo, issueNumber, durationHours, username) {
-  const body = `Tracked **${durationHours} hours** on this issue — @${username} via Takt`;
+export function formatCommentDuration(durationMs) {
+  const totalMinutes = Math.max(0, Math.round(durationMs / 60_000));
+  if (totalMinutes < 60) return `${totalMinutes}m`;
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  return `${hours}h ${String(minutes).padStart(2, '0')}m`;
+}
+
+export async function postTimeComment(pat, owner, repo, issueNumber, durationMs, username) {
+  if (durationMs < 60_000) return;
+  const body = `Tracked **${formatCommentDuration(durationMs)}** on this issue — @${username} via Takt`;
   const resp = await fetch(
     `https://api.github.com/repos/${owner}/${repo}/issues/${issueNumber}/comments`,
     {

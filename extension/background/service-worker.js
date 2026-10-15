@@ -542,7 +542,7 @@ async function handleMessage({ action, payload }) {
       let commentResult = null;
       try {
         const ghRepo = /^[^/\s]+\/[^/\s]+$/.test(completed.repo);
-        if (ghRepo && completed.issueNumber > 0) {
+        if (completed.durationMs >= 60_000 && ghRepo && completed.issueNumber > 0) {
           const { settings } = await chrome.storage.local.get('settings');
           if (settings?.pat) {
             let username = settings.username;
@@ -558,10 +558,9 @@ async function handleMessage({ action, payload }) {
             }
             if (username) {
               const [owner, repo] = completed.repo.split('/');
-              const durationHours = Math.round((completed.durationMs / 3600000) * 4) / 4;
               await postTimeComment(
                 settings.pat, owner, repo, completed.issueNumber,
-                durationHours, username
+                completed.durationMs, username
               );
               commentResult = { ok: true };
             }
