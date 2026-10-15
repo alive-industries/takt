@@ -291,10 +291,7 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
   const { activeSession } = await getState();
   if (!activeSession) {
     await maybeClearAlarm();
-    return;
   }
-  // Broadcast tick so any open content scripts / popup can sync
-  broadcastTick(activeSession);
 });
 
 async function onWake() {
@@ -307,17 +304,6 @@ async function onWake() {
 
 chrome.runtime.onStartup.addListener(onWake);
 chrome.runtime.onInstalled.addListener(onWake);
-
-function broadcastTick(session) {
-  const elapsedMs = computeElapsed(session);
-  const message = { action: 'TICK', payload: { elapsedMs, session } };
-  // Send to all tabs with content scripts
-  chrome.tabs.query({ url: 'https://github.com/*/*/issues/*' }, (tabs) => {
-    for (const tab of tabs) {
-      chrome.tabs.sendMessage(tab.id, message).catch(() => {});
-    }
-  });
-}
 
 // --- Message handling ---
 

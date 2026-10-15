@@ -248,6 +248,13 @@
     chrome.tabs.create({ url: chrome.runtime.getURL('dashboard/dashboard.html') });
   });
 
+  chrome.storage.onChanged.addListener((changes, areaName) => {
+    if (areaName !== 'local' || !changes.activeSession) return;
+    currentSession = changes.activeSession.newValue || null;
+    renderActive();
+    toggleDisplayTimer();
+  });
+
   // --- Init ---
 
   init();

@@ -24,6 +24,7 @@
   let githubProjects = [];
   let selectedClientId = null;
   let clientsLoaded = false;
+  let bigQueryStatusInterval = null;
 
   function send(action, payload = {}) {
     return chrome.runtime.sendMessage({ action, payload });
@@ -51,6 +52,7 @@
   }
 
   async function loadBigQueryStatus() {
+    if (currentUser?.role !== 'admin' || document.hidden) return;
     const response = await send('GET_BIGQUERY_SYNC_STATUS');
     bqStatus.hidden = false;
     if (!response?.ok) {
@@ -77,6 +79,25 @@
       : (status.incomplete ? 'Complete details first' : 'BigQuery synced');
     bqSyncButton.disabled = status.pending === 0;
   }
+
+  function startBigQueryStatusPolling() {
+    clearInterval(bigQueryStatusInterval);
+    bigQueryStatusInterval = null;
+    if (currentUser?.role === 'admin' && !document.hidden) {
+      bigQueryStatusInterval = setInterval(loadBigQueryStatus, 60_000);
+    }
+  }
+
+  document.addEventListener('visibilitychange', () => {
+    if (currentUser?.role !== 'admin') return;
+    if (document.hidden) {
+      clearInterval(bigQueryStatusInterval);
+      bigQueryStatusInterval = null;
+    } else {
+      loadBigQueryStatus();
+      startBigQueryStatusPolling();
+    }
+  });
 
   function selectedClient() {
     return clients.find((client) => client.client_id === selectedClientId) || null;
@@ -267,8 +288,10 @@
     syncPill.style.color = syncColor;
     syncPill.style.borderColor = syncColor;
     showView(window.location.hash.slice(1) || 'time');
-    await loadBigQueryStatus();
-    setInterval(loadBigQueryStatus, 15000);
+    if (currentUser?.role === 'admin') {
+      await loadBigQueryStatus();
+      startBigQueryStatusPolling();
+    }
   }
 
   bqSyncButton.addEventListener('click', async () => {
