@@ -40,6 +40,8 @@
 //     deletedAt: number | null,    // soft-delete marker (ms epoch); null = active
 //   }
 
+import { withLock } from './lock.js';
+
 const KEY = 'sessionCache';
 const RETENTION_DAYS = 30;
 
@@ -125,7 +127,12 @@ export function toBackendPayload(r) {
 function pruneInPlace(cache) {
   const cutoff = Date.now() - RETENTION_DAYS * 86_400_000;
   for (const [id, rec] of Object.entries(cache.byId)) {
-    if (rec.completedAt < cutoff) delete cache.byId[id];
+    if (
+      rec.completedAt < cutoff
+      && (rec.syncStatus === 'synced' || !rec.syncStatus)
+    ) {
+      delete cache.byId[id];
+    }
   }
 }
 
@@ -133,13 +140,15 @@ function pruneInPlace(cache) {
 
 export async function upsertSessions(records) {
   if (!records || records.length === 0) return;
-  const cache = await load();
-  for (const r of records) {
-    if (!r.sessionId) continue;
-    cache.byId[r.sessionId] = { ...cache.byId[r.sessionId], ...r };
-  }
-  pruneInPlace(cache);
-  await save(cache);
+  return withLock('sessionCache', async () => {
+    const cache = await load();
+    for (const r of records) {
+      if (!r.sessionId) continue;
+      cache.byId[r.sessionId] = { ...cache.byId[r.sessionId], ...r };
+    }
+    pruneInPlace(cache);
+    await save(cache);
+  });
 }
 
 export async function upsertSession(record) {
@@ -154,11 +163,13 @@ export async function getSession(sessionId) {
 
 export async function removeSession(sessionId) {
   if (!sessionId) return null;
-  const cache = await load();
-  const removed = cache.byId[sessionId] || null;
-  delete cache.byId[sessionId];
-  await save(cache);
-  return removed;
+  return withLock('sessionCache', async () => {
+    const cache = await load();
+    const removed = cache.byId[sessionId] || null;
+    delete cache.byId[sessionId];
+    await save(cache);
+    return removed;
+  });
 }
 
 // Synchronously available shape for filter/sort. Date filters are inclusive.
@@ -194,90 +205,38 @@ export async function listSessions({ from, to, repo, limit = 1000 } = {}) {
  *   even if absent from the server response — they're awaiting a push.
  */
 export async function reconcileWindow({ from, to, records }) {
-  const cache = await load();
-  const fromMs = from ? (typeof from === 'number' ? from : new Date(from).getTime()) : 0;
-  const toMs = to
-    ? (typeof to === 'number' ? to : new Date(to).getTime() + 86_400_000)
-    : Number.MAX_SAFE_INTEGER;
+  return withLock('sessionCache', async () => {
+    const cache = await load();
+    const fromMs = from ? (typeof from === 'number' ? from : new Date(from).getTime()) : 0;
+    const toMs = to
+      ? (typeof to === 'number' ? to : new Date(to).getTime() + 86_400_000)
+      : Number.MAX_SAFE_INTEGER;
 
-  const serverIds = new Set();
-  for (const r of records || []) {
-    if (!r.sessionId) continue;
-    serverIds.add(r.sessionId);
-    cache.byId[r.sessionId] = { ...cache.byId[r.sessionId], ...r };
-  }
+    const serverIds = new Set();
+    for (const r of records || []) {
+      if (!r.sessionId) continue;
+      serverIds.add(r.sessionId);
+      cache.byId[r.sessionId] = { ...cache.byId[r.sessionId], ...r };
+    }
 
-  // Drop cached entries within the window that the server didn't return,
-  // unless they have unsynced local changes.
-  for (const [id, rec] of Object.entries(cache.byId)) {
-    if (rec.completedAt < fromMs || rec.completedAt >= toMs) continue;
-    if (serverIds.has(id)) continue;
-    if (rec.syncStatus && rec.syncStatus !== 'synced') continue;
-    delete cache.byId[id];
-  }
+    // Drop cached entries within the window that the server didn't return,
+    // unless they have unsynced local changes.
+    for (const [id, rec] of Object.entries(cache.byId)) {
+      if (rec.completedAt < fromMs || rec.completedAt >= toMs) continue;
+      if (serverIds.has(id)) continue;
+      if (rec.syncStatus && rec.syncStatus !== 'synced') continue;
+      delete cache.byId[id];
+    }
 
-  cache.lastSyncAt = Date.now();
-  pruneInPlace(cache);
-  await save(cache);
+    cache.lastSyncAt = Date.now();
+    pruneInPlace(cache);
+    await save(cache);
+  });
 }
 
 export async function getLastSyncAt() {
   const cache = await load();
   return cache.lastSyncAt;
-}
-
-// --- Migration from legacy completedSessions[] ---
-
-async function deriveStableId(s) {
-  const key = `${s.repo}|${s.issueNumber}|${s.completedAt}|${s.durationMs}`;
-  const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(key));
-  const hex = [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, '0')).join('');
-  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-5${hex.slice(13, 16)}-8${hex.slice(17, 20)}-${hex.slice(20, 32)}`;
-}
-
-export async function migrateFromCompletedSessions() {
-  const { completedSessions = [] } = await chrome.storage.local.get('completedSessions');
-  if (completedSessions.length === 0) return { migrated: 0 };
-
-  const cache = await load();
-  let migrated = 0;
-  for (const s of completedSessions) {
-    const sessionId = s.sessionId || (await deriveStableId(s));
-    if (cache.byId[sessionId]) continue; // already in cache
-    cache.byId[sessionId] = {
-      sessionId,
-      source: s.sourceUrl && s.issueNumber > 0 ? 'github' : 'manual',
-      entryType: s.issueNumber > 0 ? 'delivery' : 'ops',
-      clientId: null,
-      client: null,
-      repo: s.issueNumber > 0 ? s.repo : null,
-      reportingProjectId: null,
-      project: null,
-      issueNumber: s.issueNumber > 0 ? s.issueNumber : 0,
-      issueTitle: s.issueNumber > 0 ? (s.issueTitle ?? null) : null,
-      description: s.issueTitle ?? s.categoryTitle ?? s.category ?? s.repo,
-      githubMetadata: {},
-      issueUrl: null,
-      sourceUrl: s.sourceUrl ?? null,
-      startedAt: s.startedAtMs ?? (s.completedAt - s.durationMs),
-      completedAt: s.completedAt,
-      durationMs: s.durationMs,
-      durationHours: Math.round((s.durationMs / 3_600_000) * 4) / 4,
-      durationHoursExact: s.durationMs / 3_600_000,
-      reportingStatus: 'pending_metadata',
-      label: null,
-      syncedToProject: false,
-      projectTitles: [],
-      projectIds: [],
-      taktVersion: null,
-      syncStatus: 'pending',
-      syncedAt: null,
-    };
-    migrated += 1;
-  }
-  pruneInPlace(cache);
-  await save(cache);
-  return { migrated };
 }
 
 // --- Counts (for UI status pip / debug) ---
