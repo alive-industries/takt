@@ -234,7 +234,7 @@
 
   async function init() {
     const [meResponse, ping, queue] = await Promise.all([
-      send('GET_BACKEND_ME'), send('BACKEND_PING'), send('QUEUE_LENGTH'),
+      send('GET_BACKEND_ME'), send('BACKEND_PING'), send('QUEUE_STATUS'),
     ]);
     if (meResponse?.ok) {
       currentUser = meResponse.me;
@@ -246,9 +246,26 @@
     }
     const online = !!ping?.ok;
     document.getElementById('status-dot').style.background = online ? '#42c88a' : '#ef6b73';
-    const pending = queue?.length || 0;
-    document.getElementById('sync-pill').textContent = online
-      ? (pending ? `${pending} pending` : 'All changes synced') : 'Working offline';
+    const syncPill = document.getElementById('sync-pill');
+    const failed = queue?.failed?.length || 0;
+    let syncText;
+    let syncColor;
+    if (failed > 0) {
+      syncText = `${failed} failed to sync`;
+      syncColor = '#d1242f';
+    } else if (queue?.authBlocked) {
+      syncText = 'Sync paused — check GitHub token';
+      syncColor = '#9a6700';
+    } else if ((queue?.pending || 0) > 0) {
+      syncText = `${queue.pending} pending`;
+      syncColor = '#9a6700';
+    } else {
+      syncText = online ? 'All changes synced' : 'Working offline';
+      syncColor = online ? '#1a7f37' : '#d1242f';
+    }
+    syncPill.innerHTML = `<span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:${syncColor};margin-right:6px;vertical-align:middle;"></span>${escapeHtml(syncText)}`;
+    syncPill.style.color = syncColor;
+    syncPill.style.borderColor = syncColor;
     showView(window.location.hash.slice(1) || 'time');
     await loadBigQueryStatus();
     setInterval(loadBigQueryStatus, 15000);

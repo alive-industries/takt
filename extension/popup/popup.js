@@ -211,15 +211,24 @@
     if (!el) return;
     const [ping, queue] = await Promise.all([
       sendMessage('BACKEND_PING'),
-      sendMessage('QUEUE_LENGTH'),
+      sendMessage('QUEUE_STATUS'),
     ]);
     const dot = (color) =>
       `<span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:${color};margin-right:4px;vertical-align:middle;"></span>`;
-    if (ping?.ok) {
-      const pending = queue?.length || 0;
-      el.innerHTML = pending > 0
-        ? dot('#bf8700') + `${pending} pending`
-        : dot('#1a7f37') + 'synced';
+    const failed = queue?.failed?.length || 0;
+    if (failed > 0) {
+      el.innerHTML = `${dot('#d1242f')}${failed} failed to sync <button class="sync-retry" id="retry-failed">Retry</button>`;
+      document.getElementById('retry-failed').addEventListener('click', async (event) => {
+        event.currentTarget.disabled = true;
+        await sendMessage('RETRY_FAILED');
+        refreshSyncStatus();
+      });
+    } else if (queue?.authBlocked) {
+      el.innerHTML = dot('#bf8700') + 'Sync paused — check GitHub token';
+    } else if ((queue?.pending || 0) > 0) {
+      el.innerHTML = dot('#bf8700') + `${queue.pending} pending`;
+    } else if (ping?.ok) {
+      el.innerHTML = dot('#1a7f37') + 'synced';
     } else {
       el.innerHTML = dot('#d1242f') + 'offline';
     }

@@ -26,6 +26,7 @@ Syntax-check JS without loading:
 
 ```bash
 node --check extension/background/service-worker.js   # etc.
+node --test tests/extension/*.test.js
 ```
 
 ### Project-rename sync (`server/scripts/sync_projects.py`)
@@ -90,17 +91,16 @@ sessionCache = {
 
 Patterns:
 - **Reads** (My Time, popup): render from cache instantly → kick off `LIST_BACKEND_SESSIONS` in the background → SW reconciles cache against the server response → re-render silently if changed.
-- **Writes** (STOP, UPDATE, DELETE): optimistic cache mutation → push to backend → on success update sync metadata; on failure revert local change. Push failures are also enqueued in `syncQueue` for retry on alarm tick.
+- **Writes** (STOP, manual entry): write to the local cache and enqueue the backend payload before pushing. `syncQueue` is a durable outbox: retryable errors stay pending with backoff, terminal errors stay failed for explicit retry or discard, and entries are never dropped automatically. Successful pushes update cache sync metadata. UPDATE/DELETE keep their optimistic cache mutation and rollback on backend failure.
 - **Reconciliation** (`local-store.js#reconcileWindow`): server response is authoritative for the queried window. Cached entries in that window with no matching server row are dropped (handles peer/admin deletes), **except** entries with `syncStatus !== 'synced'` which are pending local changes.
 - **Retention**: cache prunes entries older than 30 days on every write. Filter ranges fully within the cache window render instantly + revalidate; older ranges go straight to backend (no cache).
-- **Migration**: `migrateFromCompletedSessions()` folds the legacy `completedSessions[]` array into the new keyed cache on first wake of v0.3.0+, generating stable SHA-256-derived sessionIds for entries pre-v0.2.0.
 
 Why this exists: pre-v0.3.0, every My Time open did a synchronous backend round-trip and felt slow. The cache makes the common path zero-latency while PostgreSQL provides cross-device / cross-user consistency.
 
 ## Conventions
 
 - PostgreSQL/BigQuery identifiers use snake_case; extension state uses camelCase; conversion lives in `local-store.js#fromBackendSession` / `local-store.js#toBackendPayload`.
-- `session_id` is generated at START time. PostgreSQL inserts use conflict-safe idempotency on `session_id`; legacy local sessions use deterministic SHA-256-derived IDs.
+- `session_id` is generated at START time. PostgreSQL inserts and the extension outbox use conflict-safe idempotency on `session_id`.
 - Times are PostgreSQL `TIMESTAMPTZ` and BigQuery `TIMESTAMP`, serialised as ISO 8601.
 - Hours rounded to 0.25 for display/Projects sync; raw `duration_ms` is source of truth.
 
