@@ -28,7 +28,7 @@ class InvalidEntry(TaktError):
     code = "invalid_entry"
 
     def __init__(self, message: str):
-        super().__init__(message, status.HTTP_422_UNPROCESSABLE_ENTITY)
+        super().__init__(message, 422)
 
 
 class Conflict(TaktError):

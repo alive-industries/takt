@@ -126,6 +126,33 @@ test('422 responses remain failed until explicitly retried', async () => {
   assert.equal(await queueLength(), 0);
 });
 
+test('Pydantic 422 details are retained as validation errors', async () => {
+  globalThis.fetch = async () => ({
+    ok: false,
+    status: 422,
+    async json() {
+      return {
+        detail: [
+          { msg: 'started_at is invalid' },
+          { msg: 'completed_at must not be before started_at' },
+        ],
+      };
+    },
+  });
+  await enqueueSession(makePayload('pydantic-invalid'));
+
+  await flushQueue();
+
+  const [item] = storage.syncQueue;
+  assert.equal(item.state, 'failed');
+  assert.equal(item.lastError.status, 422);
+  assert.equal(item.lastError.code, 'validation_error');
+  assert.equal(
+    item.lastError.message,
+    'started_at is invalid; completed_at must not be before started_at'
+  );
+});
+
 test('concurrent flush calls share one request per item', async () => {
   let started;
   const requestStarted = new Promise((resolve) => { started = resolve; });

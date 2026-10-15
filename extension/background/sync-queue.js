@@ -99,7 +99,6 @@ export async function enqueueSession(payload, { holdMs = 0 } = {}) {
 export async function queueLength() {
   return withLock('syncQueue', async () => {
     const queue = await loadQueue();
-    await saveQueue(queue);
     return queue.length;
   });
 }
@@ -107,7 +106,6 @@ export async function queueLength() {
 export async function queueStatus() {
   return withLock('syncQueue', async () => {
     const queue = await loadQueue();
-    await saveQueue(queue);
     const pending = queue.filter((item) => item.state === 'pending');
     const failed = queue
       .filter((item) => item.state === 'failed')
@@ -146,7 +144,6 @@ export async function discardFailed(sessionId) {
       (item) => item.sessionId === sessionId && item.state === 'failed'
     );
     if (index < 0) {
-      await saveQueue(queue);
       return false;
     }
     queue.splice(index, 1);
@@ -215,7 +212,6 @@ export async function pushOne(payload) {
 async function flushQueueWork() {
   const snapshot = await withLock('syncQueue', async () => {
     const queue = await loadQueue();
-    await saveQueue(queue);
     const now = Date.now();
     return queue
       .filter(

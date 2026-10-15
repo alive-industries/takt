@@ -542,7 +542,7 @@ async function handleMessage({ action, payload }) {
       let commentResult = null;
       try {
         const ghRepo = /^[^/\s]+\/[^/\s]+$/.test(completed.repo);
-        if (backendResult?.ok && ghRepo && completed.issueNumber > 0) {
+        if (ghRepo && completed.issueNumber > 0) {
           const { settings } = await chrome.storage.local.get('settings');
           if (settings?.pat) {
             let username = settings.username;
@@ -715,9 +715,9 @@ async function handleMessage({ action, payload }) {
     }
 
     case 'DISCARD_FAILED': {
-      await discardFailed(payload?.sessionId);
-      if (payload?.sessionId) await cache.removeSession(payload.sessionId);
-      return { ok: true };
+      const discarded = await discardFailed(payload?.sessionId);
+      if (discarded && payload?.sessionId) await cache.removeSession(payload.sessionId);
+      return { ok: true, discarded };
     }
 
     case 'LIST_LOCAL_SESSIONS': {

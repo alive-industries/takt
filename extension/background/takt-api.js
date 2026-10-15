@@ -51,11 +51,14 @@ async function request(method, path, { body, signal } = {}) {
   }
 
   if (!resp.ok) {
-    const detail = json?.detail || {};
+    const validationErrors = Array.isArray(json?.detail) ? json.detail : null;
+    const detail = validationErrors ? null : json?.detail || {};
     throw new TaktApiError(
       resp.status,
-      detail.code || 'http_error',
-      detail.message || `HTTP ${resp.status}`
+      validationErrors ? 'validation_error' : detail.code || 'http_error',
+      validationErrors
+        ? validationErrors.map((item) => item.msg).join('; ')
+        : detail.message || `HTTP ${resp.status}`
     );
   }
 
