@@ -33,43 +33,18 @@
   // (last 30 days). Used to decide if we can serve from cache or have to
   // wait for the backend.
   const RETENTION_DAYS = 30;
+  const { escapeHtml, escapeAttribute } = self.TaktUI;
+  const toHours = self.TaktTime.roundQuarterHours;
 
   // --- Helpers ---
-
-  function formatDuration(ms) {
-    const totalSec = Math.floor(ms / 1000);
-    const h = Math.floor(totalSec / 3600);
-    const m = Math.floor((totalSec % 3600) / 60);
-    const s = totalSec % 60;
-    return [h, m, s].map((v) => String(v).padStart(2, '0')).join(':');
-  }
 
   // Time parsing/formatting comes from the shared lib (../lib/time-format.js).
   // Same digit-buffer UX as the on-issue timer editor: type digits, last 2
   // become seconds, next 2 become minutes, the rest are hours. So `3000`
   // means 00:30:00.
 
-  function toHours(ms) {
-    return Math.round((ms / 3600000) * 4) / 4;
-  }
-
-  function formatDate(timestamp) {
-    const d = new Date(timestamp);
-    return d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
-  }
-
   function sendMessage(action, payload = {}) {
     return chrome.runtime.sendMessage({ action, payload });
-  }
-
-  function escapeHtml(str) {
-    const div = document.createElement('div');
-    div.textContent = str ?? '';
-    return div.innerHTML;
-  }
-
-  function escapeAttribute(str) {
-    return escapeHtml(str).replace(/"/g, '&quot;').replace(/'/g, '&#39;');
   }
 
   // Sync state icon. 'pending' = STOP not yet pushed; 'dirty' = edit
@@ -258,10 +233,10 @@
           : '';
         return `
           <tr data-sid="${escapeHtml(s.sessionId || '')}">
-            <td class="muted">${formatDate(s.completedAt)}</td>
+            <td class="muted">${self.TaktUI.formatDate(s.completedAt, 'en-GB', { day: '2-digit', month: 'short', year: 'numeric' })}</td>
             <td>${projectCell}</td>
             <td>${issueCell}${attribution}</td>
-            <td class="mono${editableClass}" data-col="duration"${editTitle}>${formatDuration(s.durationMs)}</td>
+            <td class="mono${editableClass}" data-col="duration"${editTitle}>${self.TaktUI.formatElapsed(s.durationMs)}</td>
             <td class="mono">${toHours(s.durationMs).toFixed(2)}</td>
             <td class="td-sync">${syncBadgeHtml(s.syncStatus, s.syncError)}</td>
             <td class="td-actions">
@@ -348,7 +323,7 @@
       // mirror that here in the in-memory `allSessions` so a full render
       // reflects the same state without waiting for the round trip.
       session.durationMs = newMs;
-      session.durationHours = Math.round((newMs / 3_600_000) * 4) / 4;
+      session.durationHours = toHours(newMs);
       session.syncStatus = 'dirty';
       render();
 
@@ -367,7 +342,7 @@
         // Revert in memory + show error icon on the row. The SW already
         // restored the cache for us.
         session.durationMs = originalMs;
-        session.durationHours = Math.round((originalMs / 3_600_000) * 4) / 4;
+        session.durationHours = toHours(originalMs);
         session.syncStatus = 'error';
         render();
         const msg = resp?.error?.message || 'edit failed';
@@ -427,7 +402,7 @@
       s.project || '',
       s.issueNumber || '',
       s.description || '',
-      formatDuration(s.durationMs),
+      self.TaktUI.formatElapsed(s.durationMs),
       toHours(s.durationMs).toFixed(2),
     ]);
 
@@ -554,12 +529,6 @@
   let activeTimerSession = null;
   let activeTimerInterval = null;
 
-  function computeElapsedMs(s) {
-    if (!s) return 0;
-    const running = s.status === 'running' ? Date.now() - s.startedAt : 0;
-    return (s.accumulatedMs || 0) + running;
-  }
-
   function renderActiveTimer() {
     if (!activeTimerSession) {
       activeTimerPanel.hidden = true;
@@ -571,7 +540,7 @@
     activeTimerPanel.hidden = false;
     activeTimerPanel.classList.toggle('active-timer-panel--paused', !running);
     activeTimerClock.classList.toggle('active-timer-clock--paused', !running);
-    activeTimerClock.textContent = formatDuration(computeElapsedMs(s));
+    activeTimerClock.textContent = self.TaktUI.formatElapsed(self.TaktUI.computeElapsed(s));
     activeTimerToggle.textContent = running ? 'Pause' : 'Resume';
     // Meta line = repo (+ #issue when linked). Mirrors popup formatting.
     const ref = s.issueNumber > 0
@@ -587,7 +556,7 @@
     if (activeTimerInterval) return;
     activeTimerInterval = setInterval(() => {
       if (!activeTimerSession || activeTimerSession.status !== 'running') return;
-      activeTimerClock.textContent = formatDuration(computeElapsedMs(activeTimerSession));
+      activeTimerClock.textContent = self.TaktUI.formatElapsed(self.TaktUI.computeElapsed(activeTimerSession));
     }, 1000);
   }
 

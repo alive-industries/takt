@@ -14,14 +14,11 @@
   const fieldsStatusEl = document.getElementById('fields-status');
 
   let discoveredProjects = []; // [{ id, title, org, fields: [{ id, name }] }]
+  const showStatus = (element, text, type) =>
+    self.TaktUI.showStatus(element, text, type, type ? 'status' : '');
 
   function sendMessage(action, payload = {}) {
     return chrome.runtime.sendMessage({ action, payload });
-  }
-
-  function showStatus(el, text, type) {
-    el.textContent = text;
-    el.className = type ? `status status--${type}` : '';
   }
 
   // --- Load saved settings ---

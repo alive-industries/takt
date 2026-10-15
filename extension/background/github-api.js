@@ -118,10 +118,6 @@ export async function fetchOrgRepos(pat, org = TAKT_ORG) {
   return repos;
 }
 
-// Back-compat alias. Older callers expect `fetchUserRepos`; we now restrict
-// the result to the Takt org regardless of which entry point they use.
-export const fetchUserRepos = (pat) => fetchOrgRepos(pat);
-
 // List Projects v2 that this repo is associated with. The repo level
 // query covers org projects the repo's been added to and any user-owned
 // projects. The "Add entry" cascading dropdown calls this when the user
