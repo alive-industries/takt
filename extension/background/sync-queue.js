@@ -1,21 +1,25 @@
-// Durable retry queue for backend pushes.
-//
-// Stored under `chrome.storage.local.syncQueue` as an array of:
-//   { kind: 'session', payload: <SessionIn>, attempts, nextAttemptAt }
-//
-// We back off exponentially up to a cap. Permanent failures (4xx that aren't
-// 429) are dropped to prevent the queue from poisoning forever. Network /
-// 5xx / 429 errors are kept and retried.
-
-import { pushSession, TaktApiError } from './takt-api.js';
+import { withLock } from './lock.js';
+import { pushSession } from './takt-api.js';
 
 const STORAGE_KEY = 'syncQueue';
-const MAX_BACKOFF_MS = 5 * 60 * 1000; // 5 min
-const BASE_BACKOFF_MS = 5 * 1000; // 5 sec
+const MAX_BACKOFF_MS = 5 * 60 * 1000;
+const BASE_BACKOFF_MS = 5 * 1000;
+
+let activeFlush = null;
 
 async function loadQueue() {
   const { [STORAGE_KEY]: queue = [] } = await chrome.storage.local.get(STORAGE_KEY);
-  return queue;
+  return (Array.isArray(queue) ? queue : []).map((item) => ({
+    kind: item.kind || 'session',
+    sessionId: item.sessionId ?? item.payload?.session_id ?? null,
+    payload: item.payload || {},
+    attempts: Number.isFinite(item.attempts) ? item.attempts : 0,
+    nextAttemptAt: Number.isFinite(item.nextAttemptAt) ? item.nextAttemptAt : 0,
+    state: item.state === 'failed' ? 'failed' : 'pending',
+    lastError: item.lastError ?? null,
+    enqueuedAt: Number.isFinite(item.enqueuedAt) ? item.enqueuedAt : Date.now(),
+    rev: Number.isFinite(item.rev) ? item.rev : 0,
+  }));
 }
 
 async function saveQueue(queue) {
@@ -23,84 +27,250 @@ async function saveQueue(queue) {
 }
 
 function nextDelay(attempts) {
-  return Math.min(BASE_BACKOFF_MS * 2 ** attempts, MAX_BACKOFF_MS);
+  return Math.min(BASE_BACKOFF_MS * 2 ** Math.max(0, attempts - 1), MAX_BACKOFF_MS);
 }
 
-export async function enqueueSession(session) {
-  const queue = await loadQueue();
-  queue.push({ kind: 'session', payload: session, attempts: 0, nextAttemptAt: 0 });
-  await saveQueue(queue);
+function errorDetails(err) {
+  return {
+    status: Number.isFinite(err?.status) ? err.status : null,
+    code: err?.code ?? null,
+    message: err?.message || String(err),
+  };
+}
+
+function isRetryable(error) {
+  const { status } = error;
+  return (
+    status === null
+    || status === 0
+    || status === 401
+    || status === 403
+    || status === 408
+    || status === 429
+    || status >= 500
+    || status < 400
+  );
+}
+
+function recordFailure(item, error) {
+  item.attempts += 1;
+  item.lastError = error;
+  if (isRetryable(error)) {
+    item.state = 'pending';
+    item.nextAttemptAt = Date.now() + nextDelay(item.attempts);
+  } else {
+    item.state = 'failed';
+    item.nextAttemptAt = 0;
+  }
+}
+
+export async function enqueueSession(payload, { holdMs = 0 } = {}) {
+  const sessionId = payload?.session_id;
+  if (!sessionId) throw new TypeError('Session payload must include session_id.');
+
+  return withLock('syncQueue', async () => {
+    const queue = await loadQueue();
+    const now = Date.now();
+    const existing = queue.find((item) => item.sessionId === sessionId);
+    if (existing) {
+      existing.payload = payload;
+      existing.state = 'pending';
+      existing.attempts = 0;
+      existing.nextAttemptAt = now + holdMs;
+      existing.lastError = null;
+      existing.rev += 1;
+    } else {
+      queue.push({
+        kind: 'session',
+        sessionId,
+        payload,
+        attempts: 0,
+        nextAttemptAt: now + holdMs,
+        state: 'pending',
+        lastError: null,
+        enqueuedAt: now,
+        rev: 1,
+      });
+    }
+    await saveQueue(queue);
+  });
 }
 
 export async function queueLength() {
-  return (await loadQueue()).length;
+  return withLock('syncQueue', async () => {
+    const queue = await loadQueue();
+    return queue.length;
+  });
 }
 
-// True if the error is "permanent" — no retry, drop the item.
-function isPermanentError(err) {
-  if (!(err instanceof TaktApiError)) return false;
-  if (err.status === 429) return false; // rate-limited, retry
-  if (err.status >= 400 && err.status < 500) {
-    // 401 (invalid PAT), 403 (not authorised), 422 (validation) — retrying won't help.
-    // Exception: dropping a session entirely is destructive, so log loudly.
+export async function queueStatus() {
+  return withLock('syncQueue', async () => {
+    const queue = await loadQueue();
+    const pending = queue.filter((item) => item.state === 'pending');
+    const failed = queue
+      .filter((item) => item.state === 'failed')
+      .map(({ sessionId, payload, lastError }) => ({ sessionId, payload, lastError }));
+    return {
+      pending: pending.length,
+      failed,
+      authBlocked: pending.some(
+        (item) => item.lastError?.status === 401 || item.lastError?.status === 403
+      ),
+    };
+  });
+}
+
+export async function retryFailed(sessionId) {
+  return withLock('syncQueue', async () => {
+    const queue = await loadQueue();
+    let retried = 0;
+    for (const item of queue) {
+      if (item.state !== 'failed' || (sessionId && item.sessionId !== sessionId)) continue;
+      item.state = 'pending';
+      item.attempts = 0;
+      item.nextAttemptAt = 0;
+      item.lastError = null;
+      retried += 1;
+    }
+    await saveQueue(queue);
+    return retried;
+  });
+}
+
+export async function discardFailed(sessionId) {
+  return withLock('syncQueue', async () => {
+    const queue = await loadQueue();
+    const index = queue.findIndex(
+      (item) => item.sessionId === sessionId && item.state === 'failed'
+    );
+    if (index < 0) {
+      return false;
+    }
+    queue.splice(index, 1);
+    await saveQueue(queue);
     return true;
-  }
-  return false;
+  });
 }
 
-// Attempt to flush the queue. Returns { processed, remaining, errors, drained }.
-//
-// `drained` is the list of (repo, issue_number) pairs whose sessions were
-// successfully pushed in this run. The service worker uses it to recompute
-// the corresponding GitHub Project field values — once the row lands in
-// BigQuery the authoritative total has changed, and the project field
-// needs to track that whether the push happened immediately (STOP path)
-// or after a retry delay (this path).
-export async function flushQueue() {
-  const queue = await loadQueue();
-  if (queue.length === 0) return { processed: 0, remaining: 0, errors: [], drained: [] };
+export async function pushOne(payload) {
+  const sessionId = payload?.session_id;
+  if (!sessionId) throw new TypeError('Session payload must include session_id.');
 
-  const now = Date.now();
-  const remaining = [];
-  const errors = [];
-  const drained = [];
-  let processed = 0;
-
-  for (const item of queue) {
-    if (item.nextAttemptAt > now) {
-      remaining.push(item);
-      continue;
+  const attempt = await withLock('syncQueue', async () => {
+    const queue = await loadQueue();
+    let item = queue.find((entry) => entry.sessionId === sessionId);
+    if (!item) {
+      item = {
+        kind: 'session',
+        sessionId,
+        payload,
+        attempts: 0,
+        nextAttemptAt: 0,
+        state: 'pending',
+        lastError: null,
+        enqueuedAt: Date.now(),
+        rev: 0,
+      };
+      queue.push(item);
+    } else if (JSON.stringify(item.payload) !== JSON.stringify(payload)) {
+      item.payload = payload;
+      item.rev += 1;
     }
+    await saveQueue(queue);
+    return { rev: item.rev };
+  });
 
+  try {
+    const response = await pushSession(payload);
+    await withLock('syncQueue', async () => {
+      const queue = await loadQueue();
+      const index = queue.findIndex(
+        (item) => item.sessionId === sessionId && item.rev === attempt.rev
+      );
+      if (index >= 0) queue.splice(index, 1);
+      await saveQueue(queue);
+    });
+    return { ok: true, response, error: null, failed: false };
+  } catch (err) {
+    const error = errorDetails(err);
+    const failed = !isRetryable(error);
+    await withLock('syncQueue', async () => {
+      const queue = await loadQueue();
+      const item = queue.find(
+        (entry) => entry.sessionId === sessionId && entry.rev === attempt.rev
+      );
+      if (item) {
+        item.payload = payload;
+        recordFailure(item, error);
+      }
+      await saveQueue(queue);
+    });
+    return { ok: false, response: null, error, failed };
+  }
+}
+
+async function flushQueueWork() {
+  const snapshot = await withLock('syncQueue', async () => {
+    const queue = await loadQueue();
+    const now = Date.now();
+    return queue
+      .filter(
+        (item) => item.kind === 'session'
+          && item.payload.session_id
+          && item.state === 'pending'
+          && item.nextAttemptAt <= now
+      )
+      .map(({ sessionId, rev, payload }) => ({ sessionId, rev, payload }));
+  });
+  const outcomes = [];
+
+  for (const item of snapshot) {
     try {
-      if (item.kind === 'session') {
-        await pushSession(item.payload);
-        processed += 1;
-        drained.push({
-          repo: item.payload.repo,
-          issueNumber: item.payload.issue_number,
-        });
-      } else {
-        // Unknown kind — drop it.
-        console.warn('[Takt] dropping unknown queue item kind:', item.kind);
-      }
+      outcomes.push({ ...item, response: await pushSession(item.payload), error: null });
     } catch (err) {
-      const isPermanent = isPermanentError(err);
-      errors.push({ item, error: { code: err.code, message: err.message, status: err.status }, dropped: isPermanent });
-      if (isPermanent) {
-        console.error('[Takt] dropping queue item after permanent error:', err.code, err.message, item);
-      } else {
-        item.attempts = (item.attempts || 0) + 1;
-        item.nextAttemptAt = now + nextDelay(item.attempts);
-        remaining.push(item);
-      }
+      outcomes.push({ ...item, response: null, error: errorDetails(err) });
     }
   }
 
-  await saveQueue(remaining);
-  return { processed, remaining: remaining.length, errors, drained };
+  return withLock('syncQueue', async () => {
+    const queue = await loadQueue();
+    const drained = [];
+    const failed = [];
+
+    for (const outcome of outcomes) {
+      const index = queue.findIndex(
+        (item) => item.sessionId === outcome.sessionId && item.rev === outcome.rev
+      );
+      if (index < 0) continue;
+
+      const item = queue[index];
+      if (!outcome.error) {
+        queue.splice(index, 1);
+        drained.push({ payload: outcome.payload, response: outcome.response });
+        continue;
+      }
+
+      recordFailure(item, outcome.error);
+      if (item.state === 'failed') {
+        failed.push({ payload: item.payload, error: outcome.error });
+      }
+    }
+
+    await saveQueue(queue);
+    return {
+      processed: outcomes.length,
+      remaining: queue.length,
+      drained,
+      failed,
+    };
+  });
 }
 
-export async function clearQueue() {
-  await saveQueue([]);
+export function flushQueue() {
+  if (!activeFlush) {
+    activeFlush = flushQueueWork().finally(() => {
+      activeFlush = null;
+    });
+  }
+  return activeFlush;
 }

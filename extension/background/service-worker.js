@@ -10,9 +10,17 @@ import {
   fetchUserOrgs,
   TAKT_ORG,
 } from './github-api.js';
-import { enqueueSession, flushQueue, queueLength } from './sync-queue.js';
 import {
-  pushSession,
+  discardFailed,
+  enqueueSession,
+  flushQueue,
+  pushOne,
+  queueLength,
+  queueStatus,
+  retryFailed,
+} from './sync-queue.js';
+import { withLock } from './lock.js';
+import {
   getMe as getBackendMe,
   ping as pingBackend,
   listSessions as listBackendSessions,
@@ -46,14 +54,6 @@ async function getState() {
 
 async function saveSession(activeSession) {
   await chrome.storage.local.set({ activeSession });
-}
-
-// Read legacy completedSessions[] for one-shot operations like backfill.
-// New sessions are written into the cache only (see local-store.js).
-async function getLegacyCompleted() {
-  const { completedSessions = [] } =
-    await chrome.storage.local.get(['completedSessions']);
-  return completedSessions;
 }
 
 function computeElapsed(session) {
@@ -137,19 +137,6 @@ function toBackendSession(completed, linkedProjects = []) {
   };
 }
 
-// Deterministic UUID-shaped id for legacy local sessions that were created
-// before we generated session ids on START. Uses SHA-256 of the natural key
-// formatted as a UUID v5-ish string. Idempotent per-record so backfill is
-// safe to run multiple times.
-async function stableSessionId(localSession) {
-  const key = `${localSession.repo}|${localSession.issueNumber}|${localSession.completedAt}|${localSession.durationMs}`;
-  const enc = new TextEncoder().encode(key);
-  const buf = await crypto.subtle.digest('SHA-256', enc);
-  const hex = [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, '0')).join('');
-  // Format as UUID-shaped string (not a real v5 — just convenient)
-  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-5${hex.slice(13, 16)}-8${hex.slice(17, 20)}-${hex.slice(20, 32)}`;
-}
-
 // Pull the authoritative total from the backend for (repo, issue) and
 // overwrite the linked GitHub Project field with it. Replaces the old
 // additive STOP-time sync so edits and deletes also propagate.
@@ -212,53 +199,66 @@ async function recomputeProjectField(repo, issueNumber) {
   return result;
 }
 
-async function pushCompletedToBackend(completed, linkedProjects = []) {
-  const payload = toBackendSession(completed, linkedProjects);
-  try {
-    const response = await pushSession(payload);
-
-    // Upsert project lookup rows so the backend always has current titles.
-    // A rename is a single-row update in the projects table; every session
-    // referencing the id reflects the new name on the next read.
-    if (linkedProjects.length) {
-      const projects = linkedProjects
-        .filter((p) => p.projectId && p.title)
-        .map((p) => ({ project_id: p.projectId, title: p.title }));
-      if (projects.length) {
-        try {
-          await syncBackendProjects(projects);
-        } catch (err) {
-          // Non-fatal — the session is already saved; project titles
-          // will be upserted on the next STOP or manual sync.
-          console.warn('[Takt] Project sync failed (non-fatal):', err.message);
-        }
-      }
+async function afterPush(payload, response) {
+  const projects = (payload.project_ids || [])
+    .map((projectId, index) => ({
+      project_id: projectId,
+      title: payload.project_titles?.[index],
+    }))
+    .filter((project) => project.project_id && project.title);
+  if (projects.length) {
+    try {
+      await syncBackendProjects(projects);
+    } catch (err) {
+      console.warn('[Takt] Project sync failed (non-fatal):', err.message);
     }
-
-    // Backend confirmed — update the caller's cache entry metadata. An admin
-    // target-member create is backend-only and must never enter this cache.
-    if (!completed.memberLogin) {
-      if (response?.session_id) {
-        await cache.upsertSession(cache.fromBackendSession(response));
-      } else {
-        await cache.upsertSession({
-          sessionId: payload.session_id,
-          syncedToProject: payload.synced_to_project,
-          projectTitles: payload.project_titles,
-          projectIds: payload.project_ids,
-          syncStatus: 'synced',
-          syncedAt: Date.now(),
-        });
-      }
-    }
-    return { ok: true, session_id: payload.session_id };
-  } catch (err) {
-    // Enqueue for retry. Permanent errors will still be dropped by the
-    // queue's permanent-error filter on the next flush. Cache stays at
-    // 'pending'.
-    await enqueueSession(payload);
-    return { ok: false, queued: true, error: err.message, code: err.code };
   }
+
+  if (!payload.member_login) {
+    if (response?.session_id) {
+      await cache.upsertSession(cache.fromBackendSession(response));
+    } else {
+      await cache.upsertSession({
+        sessionId: payload.session_id,
+        syncedToProject: payload.synced_to_project,
+        projectTitles: payload.project_titles,
+        projectIds: payload.project_ids,
+        syncStatus: 'synced',
+        syncedAt: Date.now(),
+      });
+    }
+  }
+}
+
+async function drainQueue() {
+  const result = await flushQueue();
+  const recompute = new Map();
+
+  for (const { payload, response } of result.drained) {
+    await afterPush(payload, response);
+    if (payload.issue_number > 0) {
+      const key = `${payload.repo}#${payload.issue_number}`;
+      recompute.set(key, [payload.repo, payload.issue_number]);
+    }
+  }
+
+  for (const [repo, issueNumber] of recompute.values()) {
+    recomputeProjectField(repo, issueNumber).catch((err) =>
+      console.warn('[Takt] project recompute (drain) failed:', err)
+    );
+  }
+
+  for (const { payload, error } of result.failed) {
+    if (payload.member_login) continue;
+    await cache.upsertSession({
+      sessionId: payload.session_id,
+      syncStatus: 'error',
+      syncError: error?.message || String(error),
+    });
+  }
+
+  if ((await queueStatus()).pending > 0) startAlarm();
+  return result;
 }
 
 // --- Alarm keep-alive ---
@@ -271,36 +271,26 @@ function clearAlarm() {
   chrome.alarms.clear(ALARM_NAME);
 }
 
+async function maybeClearAlarm() {
+  const active = await withLock('timer', async () => {
+    const { activeSession } = await getState();
+    return Boolean(activeSession);
+  });
+  if (!active && (await queueStatus()).pending === 0) clearAlarm();
+}
+
 chrome.alarms.onAlarm.addListener(async (alarm) => {
   if (alarm.name !== ALARM_NAME) return;
 
-  // Always try to drain the sync queue — handles offline-then-online recovery.
   try {
-    const result = await flushQueue();
-    // After a successful drain the server has new rows that affect the
-    // (repo, issue) totals — re-sync the linked Project fields. Deduped
-    // per (repo, issue) so we don't recompute twice for back-to-back
-    // edits on the same issue.
-    if (result?.drained?.length) {
-      const seen = new Set();
-      for (const { repo, issueNumber } of result.drained) {
-        const key = `${repo}#${issueNumber}`;
-        if (seen.has(key)) continue;
-        seen.add(key);
-        recomputeProjectField(repo, issueNumber).catch((err) =>
-          console.warn('[Takt] project recompute (drain) failed:', err)
-        );
-      }
-    }
+    await drainQueue();
   } catch (err) {
-    console.warn('[Takt] flushQueue error:', err);
+    console.warn('[Takt] queue drain error:', err);
   }
 
   const { activeSession } = await getState();
   if (!activeSession) {
-    // Only clear the alarm if there's nothing in the queue either; otherwise
-    // we want to keep ticking until the queue drains.
-    if ((await queueLength()) === 0) clearAlarm();
+    await maybeClearAlarm();
     return;
   }
   // Broadcast tick so any open content scripts / popup can sync
@@ -308,24 +298,10 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
 });
 
 async function onWake() {
-  // Drain the queue if anything's pending.
-  if ((await queueLength()) > 0) {
-    startAlarm();
-    flushQueue().catch(() => {});
-  }
-  // One-shot migration: if the new sessionCache is empty but we have
-  // legacy completedSessions, fold them in so the user doesn't see an
-  // empty My Time after upgrading.
   try {
-    const counts = await cache.counts();
-    if (counts.total === 0) {
-      const result = await cache.migrateFromCompletedSessions();
-      if (result.migrated > 0) {
-        console.log('[Takt] migrated', result.migrated, 'legacy sessions into cache');
-      }
-    }
+    await drainQueue();
   } catch (err) {
-    console.warn('[Takt] cache migration failed:', err);
+    console.warn('[Takt] queue drain on wake failed:', err);
   }
 }
 
@@ -346,126 +322,142 @@ function broadcastTick(session) {
 // --- Message handling ---
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
-  handleMessage(message).then(sendResponse);
+  handleMessage(message).then(
+    sendResponse,
+    (err) => sendResponse({ ok: false, error: err?.message || String(err) })
+  );
   return true; // async response
 });
 
 async function handleMessage({ action, payload }) {
-  const { activeSession } = await getState();
+  const activeSession = ['START', 'PAUSE', 'RESUME', 'SET_TIME', 'STOP'].includes(action)
+    ? null
+    : (await getState()).activeSession;
 
   switch (action) {
     case 'START': {
-      if (activeSession) {
-        const ref = activeSession.issueNumber > 0
-          ? `${activeSession.repo}#${activeSession.issueNumber}`
-          : (activeSession.description || activeSession.client || 'another task');
-        return { error: `Timer already active on ${ref}` };
-      }
-      const issueNum = Number.isFinite(payload.issueNumber) && payload.issueNumber > 0
-        ? payload.issueNumber : 0;
-      const source = payload.source || (payload.sourceUrl && issueNum > 0 ? 'github' : 'manual');
-      const entryType = source === 'github' ? 'delivery' : (payload.entryType || 'ops');
-      const session = {
-        sessionId: crypto.randomUUID(),
-        source,
-        entryType,
-        clientId: payload.clientId ?? null,
-        client: payload.client || null,
-        repo: entryType === 'ops' ? null : (payload.repo || null),
-        reportingProjectId: payload.reportingProjectId || null,
-        project: payload.project || null,
-        issueNumber: entryType === 'ops' ? 0 : issueNum,
-        issueTitle: entryType === 'ops' ? null : (payload.issueTitle || null),
-        description: payload.description || payload.issueTitle || null,
-        sourceUrl: payload.sourceUrl || null,
-        startedAt: Date.now(),
-        accumulatedMs: 0,
-        status: 'running',
-      };
-      await saveSession(session);
-      startAlarm();
-      return { ok: true, session };
+      return withLock('timer', async () => {
+        const { activeSession } = await getState();
+        if (activeSession) {
+          const ref = activeSession.issueNumber > 0
+            ? `${activeSession.repo}#${activeSession.issueNumber}`
+            : (activeSession.description || activeSession.client || 'another task');
+          return { error: `Timer already active on ${ref}` };
+        }
+        const issueNum = Number.isFinite(payload.issueNumber) && payload.issueNumber > 0
+          ? payload.issueNumber : 0;
+        const source = payload.source || (payload.sourceUrl && issueNum > 0 ? 'github' : 'manual');
+        const entryType = source === 'github' ? 'delivery' : (payload.entryType || 'ops');
+        const startedAt = Date.now();
+        const session = {
+          sessionId: crypto.randomUUID(),
+          source,
+          entryType,
+          clientId: payload.clientId ?? null,
+          client: payload.client || null,
+          repo: entryType === 'ops' ? null : (payload.repo || null),
+          reportingProjectId: payload.reportingProjectId || null,
+          project: payload.project || null,
+          issueNumber: entryType === 'ops' ? 0 : issueNum,
+          issueTitle: entryType === 'ops' ? null : (payload.issueTitle || null),
+          description: payload.description || payload.issueTitle || null,
+          sourceUrl: payload.sourceUrl || null,
+          startedAt,
+          firstStartedAt: startedAt,
+          accumulatedMs: 0,
+          status: 'running',
+        };
+        await saveSession(session);
+        startAlarm();
+        return { ok: true, session };
+      });
     }
 
     case 'PAUSE': {
-      if (!activeSession || activeSession.status !== 'running') {
-        return { error: 'No running session to pause' };
-      }
-      activeSession.accumulatedMs += Date.now() - activeSession.startedAt;
-      activeSession.startedAt = null;
-      activeSession.status = 'paused';
-      await saveSession(activeSession);
-      clearAlarm();
-      return { ok: true, session: activeSession };
+      const result = await withLock('timer', async () => {
+        const { activeSession } = await getState();
+        if (!activeSession || activeSession.status !== 'running') {
+          return { error: 'No running session to pause' };
+        }
+        activeSession.accumulatedMs += Date.now() - activeSession.startedAt;
+        activeSession.startedAt = null;
+        activeSession.status = 'paused';
+        await saveSession(activeSession);
+        return { ok: true, session: activeSession };
+      });
+      await maybeClearAlarm();
+      return result;
     }
 
     case 'RESUME': {
-      if (!activeSession || activeSession.status !== 'paused') {
-        return { error: 'No paused session to resume' };
-      }
-      activeSession.startedAt = Date.now();
-      activeSession.status = 'running';
-      await saveSession(activeSession);
-      startAlarm();
-      return { ok: true, session: activeSession };
+      return withLock('timer', async () => {
+        const { activeSession } = await getState();
+        if (!activeSession || activeSession.status !== 'paused') {
+          return { error: 'No paused session to resume' };
+        }
+        activeSession.startedAt = Date.now();
+        activeSession.status = 'running';
+        await saveSession(activeSession);
+        startAlarm();
+        return { ok: true, session: activeSession };
+      });
     }
 
     case 'SET_TIME': {
-      if (!activeSession) {
-        return { error: 'No active session to update' };
-      }
-      // payload.ms is the total elapsed time the user wants
-      const newMs = payload.ms;
-      if (typeof newMs !== 'number' || newMs < 0) {
-        return { error: 'Invalid time value' };
-      }
-      if (activeSession.status === 'running') {
-        // Reset startedAt to now, put everything into accumulatedMs
-        activeSession.accumulatedMs = newMs;
-        activeSession.startedAt = Date.now();
-      } else {
-        // Paused — just set accumulated
-        activeSession.accumulatedMs = newMs;
-      }
-      await saveSession(activeSession);
-      return { ok: true, session: activeSession };
+      return withLock('timer', async () => {
+        const { activeSession } = await getState();
+        if (!activeSession) {
+          return { error: 'No active session to update' };
+        }
+        const newMs = payload.ms;
+        if (typeof newMs !== 'number' || newMs < 0) {
+          return { error: 'Invalid time value' };
+        }
+        if (activeSession.status === 'running') {
+          activeSession.accumulatedMs = newMs;
+          activeSession.startedAt = Date.now();
+        } else {
+          activeSession.accumulatedMs = newMs;
+        }
+        await saveSession(activeSession);
+        return { ok: true, session: activeSession };
+      });
     }
 
     case 'STOP': {
-      if (!activeSession) {
+      const completed = await withLock('timer', async () => {
+        const { activeSession } = await getState();
+        if (!activeSession) return null;
+        const durationMs = computeElapsed(activeSession);
+        const completedAt = Date.now();
+        const startedAtMs = activeSession.firstStartedAt
+          ?? (completedAt - durationMs);
+        const completedSession = {
+          sessionId: activeSession.sessionId || crypto.randomUUID(),
+          source: activeSession.source || 'manual',
+          entryType: activeSession.entryType || 'ops',
+          clientId: activeSession.clientId ?? null,
+          client: activeSession.client || null,
+          repo: activeSession.repo,
+          reportingProjectId: activeSession.reportingProjectId || null,
+          project: activeSession.project || null,
+          issueNumber: activeSession.issueNumber,
+          issueTitle: activeSession.issueTitle,
+          description: activeSession.description || activeSession.issueTitle || null,
+          sourceUrl: activeSession.sourceUrl || null,
+          startedAtMs,
+          durationMs,
+          completedAt,
+        };
+        await saveSession(null);
+        return completedSession;
+      });
+      if (!completed) {
         console.log('[Takt] STOP: no active session');
         return { error: 'No active session to stop' };
       }
-      console.log('[Takt] STOP:', activeSession.repo, '#' + activeSession.issueNumber);
-      const durationMs = computeElapsed(activeSession);
-      const completedAt = Date.now();
-      const startedAtMs = activeSession.startedAt
-        // For paused sessions startedAt is null; estimate started time
-        // from completedAt - durationMs.
-        ?? (completedAt - durationMs);
-      const completed = {
-        sessionId: activeSession.sessionId || crypto.randomUUID(),
-        source: activeSession.source || 'manual',
-        entryType: activeSession.entryType || 'ops',
-        clientId: activeSession.clientId ?? null,
-        client: activeSession.client || null,
-        repo: activeSession.repo,
-        reportingProjectId: activeSession.reportingProjectId || null,
-        project: activeSession.project || null,
-        issueNumber: activeSession.issueNumber,
-        issueTitle: activeSession.issueTitle,
-        description: activeSession.description || activeSession.issueTitle || null,
-        sourceUrl: activeSession.sourceUrl || null,
-        startedAtMs,
-        durationMs,
-        completedAt,
-      };
-      await saveSession(null);
-      clearAlarm();
 
-      // Write into the local cache immediately as 'pending'. Marked
-      // 'synced' below once the backend confirms (or stays pending and
-      // gets retried by the queue).
+      console.log('[Takt] STOP:', completed.repo, '#' + completed.issueNumber);
       const durationHoursForCache =
         Math.round((completed.durationMs / 3600000) * 4) / 4;
       const isGhStop = /^[^/\s]+\/[^/\s]+$/.test(completed.repo || '');
@@ -497,10 +489,10 @@ async function handleMessage({ action, payload }) {
         syncedAt: null,
       });
 
-      // Resolve the issue's linked projects BEFORE the push so the session
-      // row carries project_ids on its (insert-only) MERGE. This is the
-      // project association and is independent of the field-write recompute
-      // below (which needs the row to exist first, for the totals lookup).
+      const initialPayload = toBackendSession(completed, []);
+      await enqueueSession(initialPayload, { holdMs: 60_000 });
+      startAlarm();
+
       let linkedProjects = [];
       try {
         const { settings = {} } = await chrome.storage.local.get('settings');
@@ -513,22 +505,27 @@ async function handleMessage({ action, payload }) {
         console.warn('[Takt] linked-projects lookup (stop) failed:', err.message);
       }
 
-      // Push to the Takt backend (BigQuery) FIRST. The GitHub Project field
-      // sync uses `GET /v1/sessions/totals` to compute the value to write,
-      // so the row needs to exist server-side before we recompute. If the
-      // push fails it goes to the retry queue (flushQueue does the same
-      // recompute step on drain). The push carries project_ids from
-      // linkedProjects and upserts the projects lookup table.
-      let backendResult = null;
-      try {
-        backendResult = await pushCompletedToBackend(completed, linkedProjects);
-      } catch (err) {
-        backendResult = { error: err.message };
+      const payload = toBackendSession(completed, linkedProjects);
+      const pushResult = await pushOne(payload);
+      const backendResult = pushResult.ok
+        ? { ok: true, session_id: payload.session_id }
+        : {
+            ok: false,
+            queued: !pushResult.failed,
+            failed: pushResult.failed,
+            error: pushResult.error.message,
+            code: pushResult.error.code,
+          };
+      if (pushResult.ok) {
+        await afterPush(payload, pushResult.response);
+      } else if (pushResult.failed) {
+        await cache.upsertSession({
+          sessionId: completed.sessionId,
+          syncStatus: 'error',
+          syncError: pushResult.error.message,
+        });
       }
 
-      // Recompute + overwrite the GitHub Project field. Skips itself when
-      // there's no issue link, no PAT, or no project — same surface as
-      // the old additive sync.
       let syncResult = null;
       if (backendResult?.ok) {
         try {
@@ -542,8 +539,6 @@ async function handleMessage({ action, payload }) {
         syncResult = { skipped: true, reason: 'Backend push deferred — will sync on retry' };
       }
 
-      // Post comment on the issue. Skip for manual entries (issueNumber=0)
-      // and non-GitHub repo labels.
       let commentResult = null;
       try {
         const ghRepo = /^[^/\s]+\/[^/\s]+$/.test(completed.repo);
@@ -576,6 +571,7 @@ async function handleMessage({ action, payload }) {
         commentResult = { error: err.message };
       }
 
+      await maybeClearAlarm();
       return { ok: true, completed, syncResult, commentResult, backendResult };
     }
 
@@ -701,23 +697,27 @@ async function handleMessage({ action, payload }) {
     }
 
     case 'FLUSH_QUEUE': {
-      const result = await flushQueue();
-      if (result?.drained?.length) {
-        const seen = new Set();
-        for (const { repo, issueNumber } of result.drained) {
-          const key = `${repo}#${issueNumber}`;
-          if (seen.has(key)) continue;
-          seen.add(key);
-          recomputeProjectField(repo, issueNumber).catch((err) =>
-            console.warn('[Takt] project recompute (manual flush) failed:', err)
-          );
-        }
-      }
+      const result = await drainQueue();
       return { ok: true, ...result };
+    }
+
+    case 'QUEUE_STATUS': {
+      return { ok: true, ...(await queueStatus()) };
     }
 
     case 'QUEUE_LENGTH': {
       return { ok: true, length: await queueLength() };
+    }
+
+    case 'RETRY_FAILED': {
+      await retryFailed(payload?.sessionId);
+      return { ok: true, ...(await drainQueue()) };
+    }
+
+    case 'DISCARD_FAILED': {
+      const discarded = await discardFailed(payload?.sessionId);
+      if (discarded && payload?.sessionId) await cache.removeSession(payload.sessionId);
+      return { ok: true, discarded };
     }
 
     case 'LIST_LOCAL_SESSIONS': {
@@ -996,42 +996,34 @@ async function handleMessage({ action, payload }) {
         durationMs,
         completedAt,
       };
-      const backendResult = await pushCompletedToBackend(completed, linkedProjects);
+      const backendPayload = toBackendSession(completed, linkedProjects);
+      await enqueueSession(backendPayload);
+      startAlarm();
+      const pushResult = await pushOne(backendPayload);
+      const backendResult = pushResult.ok
+        ? { ok: true, session_id: backendPayload.session_id }
+        : {
+            ok: false,
+            queued: !pushResult.failed,
+            failed: pushResult.failed,
+            error: pushResult.error.message,
+            code: pushResult.error.code,
+          };
+      if (pushResult.ok) {
+        await afterPush(backendPayload, pushResult.response);
+      } else if (pushResult.failed && !memberLogin) {
+        await cache.upsertSession({
+          sessionId,
+          syncStatus: 'error',
+          syncError: pushResult.error.message,
+        });
+      }
       if (backendResult?.ok && normalizedIssue > 0) {
         recomputeProjectField(normalizedRepo, normalizedIssue)
           .catch((err) => console.warn('[Takt] project recompute (add) failed:', err));
       }
+      await maybeClearAlarm();
       return { ok: true, sessionId, backendResult };
-    }
-
-    case 'BACKFILL_LOCAL': {
-      // Push every item in legacy completedSessions[] that isn't already on
-      // the backend. We have no way to know "already on the backend" without
-      // a round-trip per item; cheap heuristic: synthesise a session_id from
-      // (repo, issue_number, completedAt) so re-runs are idempotent.
-      const legacy = await getLegacyCompleted();
-      const queued = [];
-      for (const s of legacy) {
-        const stableId = await stableSessionId(s);
-        const payload = toBackendSession(
-          {
-            sessionId: stableId,
-            repo: s.repo,
-            issueNumber: s.issueNumber,
-            issueTitle: s.issueTitle,
-            sourceUrl: null,
-            startedAtMs: s.completedAt - s.durationMs,
-            durationMs: s.durationMs,
-            completedAt: s.completedAt,
-          },
-          [] // legacy entries carry no project association
-        );
-        await enqueueSession(payload);
-        queued.push(stableId);
-      }
-      startAlarm();
-      const flushed = await flushQueue();
-      return { ok: true, queued: queued.length, flushed };
     }
 
     default:

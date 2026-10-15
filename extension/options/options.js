@@ -6,7 +6,6 @@
   const apiKeyInput = document.getElementById('api-key');
   const backendStatusPip = document.getElementById('backend-status-pip');
   const btnValidate = document.getElementById('btn-validate');
-  const btnBackfill = document.getElementById('btn-backfill');
   const statusEl = document.getElementById('status');
   const projectsSection = document.getElementById('projects-section');
   const projectsList = document.getElementById('projects-list');
@@ -88,23 +87,6 @@
     const url = chrome.runtime.getURL('dashboard/dashboard.html#admin');
     if (window.top !== window) window.top.location.href = url;
     else chrome.tabs.create({ url });
-  });
-
-  btnBackfill.addEventListener('click', async () => {
-    btnBackfill.disabled = true;
-    showStatus(statusEl, 'Backfilling local sessions to backend…', 'loading');
-    const resp = await sendMessage('BACKFILL_LOCAL');
-    if (resp?.ok) {
-      showStatus(
-        statusEl,
-        `Queued ${resp.queued}; pushed ${resp.flushed?.processed ?? 0}; ${resp.flushed?.remaining ?? 0} retrying.`,
-        'success'
-      );
-    } else {
-      showStatus(statusEl, `Backfill failed: ${resp?.error || 'unknown'}`, 'error');
-    }
-    btnBackfill.disabled = false;
-    refreshBackendStatus();
   });
 
   // --- Validate & fetch projects ---
