@@ -416,7 +416,7 @@ def test_issue_total_matches_repository_case_insensitively(client: TestClient) -
     caller = _caller(f"member-{suffix}", int(suffix[:10], 16))
     app.dependency_overrides[get_caller] = lambda: caller
     session_id = str(uuid4())
-    repo = "Org/Repo"
+    repo = f"Org/Repo-{suffix}"
     created = client.post(
         "/v1/sessions",
         json=_payload(
@@ -428,7 +428,7 @@ def test_issue_total_matches_repository_case_insensitively(client: TestClient) -
     )
     assert created.status_code == 201
 
-    totals = client.get("/v1/sessions/totals?repo=org/repo&issue=1")
+    totals = client.get(f"/v1/sessions/totals?repo={repo.lower()}&issue=1")
 
     assert totals.status_code == 200
     assert totals.json()["total_hours"] == 1
