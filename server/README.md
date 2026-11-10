@@ -98,6 +98,42 @@ The PAT needs `project` and `read:org` scope. The script fetches all org
 projects from GitHub and upserts them into the lookup table. Idempotent —
 only inserts/updates rows where the title changed.
 
+## Iteration hours analytics
+
+The iteration snapshot reads every Projects v2 iteration field, including completed
+iterations and closed projects, from `TAKT_GITHUB_ORG`. PostgreSQL org config controls
+excluded project ids and the NUMBER field used for hours (per-project override,
+then default field name). Missing hours remain NULL; all number values are retained
+as JSON. Items without iteration assignments are not exported.
+
+```bash
+cd server
+uv run python scripts/sync_iterations.py --dry-run
+uv run python scripts/sync_iterations.py
+```
+
+Set `TAKT_GITHUB_PAT` or pass `--pat`. Scopes: `read:project` and `read:org`, plus
+`repo` for private issue content. `-v` enables verbose logging. Dry-run fetches
+GitHub and reads org config but prints counts and sample rows without touching BQ.
+
+Apply `infra/bigquery/schema.sql` (substitute `__TAKT_DS__`) before the first sync.
+The `iterations` and `iteration_items` snapshots are replaced together in a BQ
+transaction only after the entire GitHub fetch and staging loads succeed. Empty
+snapshots clear stale rows. Iteration end dates are inclusive (start + duration - 1).
+The `iteration_hours` view reports GitHub item hours, lifetime Takt hours, and Takt
+hours completed within the iteration dates (UTC). Issue identities are deduplicated
+within each project/field/iteration before joining sessions; an issue deliberately
+assigned to different iterations contributes to each, so totals across iterations
+are not additive.
+
+Cloud Build deploys `_ITERATIONS_JOB` (default `takt-sync-iterations`) with Cloud SQL
+access and `TAKT_GITHUB_PAT` from `_GITHUB_PAT_SECRET` (default `takt-github-pat`).
+Provision that secret and grant the runtime service account Secret Manager access.
+Run `bash server/scripts/schedule_iterations.sh` to create/update the hourly
+scheduler; use `ITERATIONS_JOB=takt-test-sync-iterations` for the test job. Scheduler
+uses the same `GCP_PROJECT`, `REGION`, `SA_EMAIL`, and `SCHEDULER_JOB` overrides as
+the export scheduler. The scheduler identity needs Cloud Run invoker access.
+
 ## Deploying
 
 ```bash

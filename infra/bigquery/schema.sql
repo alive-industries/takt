@@ -186,3 +186,77 @@ SELECT
 FROM `__TAKT_DS__.session_facts`
 WHERE deleted_at IS NULL
   AND reporting_status = 'complete';
+
+CREATE TABLE IF NOT EXISTS `__TAKT_DS__.iterations` (
+  project_id STRING OPTIONS(description="Stable GitHub ProjectV2 node id."),
+  project_number INT64 OPTIONS(description="Organization project number."),
+  project_title STRING OPTIONS(description="Current project title."),
+  project_closed BOOL OPTIONS(description="Whether the project is closed; closed projects are included."),
+  field_id STRING OPTIONS(description="Stable iteration field node id."),
+  field_name STRING OPTIONS(description="Iteration field name (work-order section)."),
+  iteration_id STRING OPTIONS(description="GitHub iteration id, scoped to its field."),
+  title STRING OPTIONS(description="Iteration title."),
+  start_date DATE OPTIONS(description="First day of the iteration."),
+  duration_days INT64 OPTIONS(description="Iteration duration in calendar days."),
+  end_date DATE OPTIONS(description="Inclusive last day: start_date + duration_days - 1."),
+  is_completed BOOL OPTIONS(description="From configuration.completedIterations rather than iterations."),
+  synced_at TIMESTAMP OPTIONS(description="GitHub snapshot fetch time.")
+)
+OPTIONS(description="Full hourly snapshot of organization Projects v2 iterations.");
+
+CREATE TABLE IF NOT EXISTS `__TAKT_DS__.iteration_items` (
+  project_id STRING OPTIONS(description="Stable GitHub ProjectV2 node id."),
+  item_id STRING OPTIONS(description="Project item node id."),
+  field_id STRING OPTIONS(description="Iteration field node id."),
+  iteration_id STRING OPTIONS(description="Assigned iteration id."),
+  content_type STRING OPTIONS(description="Issue, PullRequest, DraftIssue, or NULL for unavailable content."),
+  repo STRING OPTIONS(description="Repository nameWithOwner; NULL for draft or unavailable content."),
+  issue_number INT64 OPTIONS(description="Issue or pull request number."),
+  issue_title STRING OPTIONS(description="Content title, including draft issues."),
+  issue_url STRING OPTIONS(description="Issue or pull request URL."),
+  issue_state STRING OPTIONS(description="GitHub issue or pull request state."),
+  status STRING OPTIONS(description="Value of the Status single-select field."),
+  hours FLOAT64 OPTIONS(description="Configured project NUMBER field value; NULL if absent."),
+  number_fields JSON OPTIONS(description="All NUMBER field values keyed by field name."),
+  synced_at TIMESTAMP OPTIONS(description="GitHub snapshot fetch time.")
+)
+OPTIONS(description="One row per project item and assigned iteration field.");
+
+CREATE OR REPLACE VIEW `__TAKT_DS__.iteration_hours` AS
+WITH item_totals AS (
+  SELECT project_id, field_id, iteration_id,
+    COUNT(*) AS item_count, SUM(hours) AS github_hours
+  FROM `__TAKT_DS__.iteration_items`
+  GROUP BY project_id, field_id, iteration_id
+), issue_set AS (
+  SELECT DISTINCT project_id, field_id, iteration_id, repo, issue_number
+  FROM `__TAKT_DS__.iteration_items`
+  WHERE repo IS NOT NULL AND issue_number IS NOT NULL
+), takt_totals AS (
+  SELECT i.project_id, i.field_id, i.iteration_id,
+    SUM(s.duration_hours_exact) AS takt_hours,
+    SUM(IF(DATE(s.completed_at) BETWEEN i.start_date AND i.end_date,
+      s.duration_hours_exact, 0)) AS takt_hours_in_window
+  FROM `__TAKT_DS__.iterations` i
+  LEFT JOIN issue_set x
+    ON i.project_id = x.project_id AND i.field_id = x.field_id
+    AND i.iteration_id = x.iteration_id
+  LEFT JOIN `__TAKT_DS__.session_facts` s
+    ON s.repo = x.repo AND s.issue_number = x.issue_number
+    AND s.deleted_at IS NULL AND s.reporting_status = 'complete'
+  GROUP BY i.project_id, i.field_id, i.iteration_id
+)
+SELECT i.project_id, i.field_id, i.iteration_id,
+  i.project_title, i.project_closed, i.field_name, i.title,
+  i.start_date, i.end_date, i.is_completed,
+  COALESCE(t.item_count, 0) AS item_count,
+  COALESCE(t.github_hours, 0) AS github_hours,
+  COALESCE(h.takt_hours, 0) AS takt_hours,
+  COALESCE(h.takt_hours_in_window, 0) AS takt_hours_in_window
+FROM `__TAKT_DS__.iterations` i
+LEFT JOIN item_totals t
+  ON i.project_id = t.project_id AND i.field_id = t.field_id
+  AND i.iteration_id = t.iteration_id
+LEFT JOIN takt_totals h
+  ON i.project_id = h.project_id AND i.field_id = h.field_id
+  AND i.iteration_id = h.iteration_id;

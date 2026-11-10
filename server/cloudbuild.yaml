@@ -7,13 +7,13 @@
 #   _AR_REPO        artifact registry repo name (default: takt)
 #   _SA             runtime service account email
 #   _BQ_DATASET     BigQuery analytics dataset (default: takt)
-#   _CLOUD_SQL_INSTANCE, _DB_URL_SECRET, _MIGRATION_JOB, _EXPORT_JOB
+#   _CLOUD_SQL_INSTANCE, _DB_URL_SECRET, _MIGRATION_JOB, _EXPORT_JOB, _ITERATIONS_JOB
 #
 # Production deploy (defaults):
 #   gcloud builds submit --config=server/cloudbuild.yaml .
 #
 # Test deploys must override the service, dataset, Cloud SQL instance, database
-# secret, and both job names together. See AGENTS.md for the complete command.
+# secret, and all job names together. See AGENTS.md for the complete command.
 
 substitutions:
   _REGION: europe-west1
@@ -28,6 +28,8 @@ substitutions:
   _API_KEY_SECRET: takt-api-key
   _MIGRATION_JOB: takt-migrate
   _EXPORT_JOB: takt-export-bigquery
+  _ITERATIONS_JOB: takt-sync-iterations
+  _GITHUB_PAT_SECRET: takt-github-pat
 
 options:
   logging: CLOUD_LOGGING_ONLY
@@ -94,6 +96,23 @@ steps:
       - --set-secrets=TAKT_DATABASE_URL=${_DB_URL_SECRET}:latest
       - --command=python
       - --args=scripts/export_bigquery.py
+
+  - id: deploy-iterations-job
+    name: gcr.io/google.com/cloudsdktool/cloud-sdk
+    entrypoint: gcloud
+    args:
+      - run
+      - jobs
+      - deploy
+      - ${_ITERATIONS_JOB}
+      - --image=${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPO}/${_SERVICE}:${BUILD_ID}
+      - --region=${_REGION}
+      - --service-account=${_SA}
+      - --set-cloudsql-instances=${_CLOUD_SQL_INSTANCE}
+      - --set-env-vars=TAKT_GCP_PROJECT=$PROJECT_ID,TAKT_BQ_DATASET=${_BQ_DATASET},TAKT_BQ_LOCATION=${_BQ_LOCATION},TAKT_GITHUB_ORG=${_GITHUB_ORG}
+      - --set-secrets=TAKT_DATABASE_URL=${_DB_URL_SECRET}:latest,TAKT_GITHUB_PAT=${_GITHUB_PAT_SECRET}:latest
+      - --command=python
+      - --args=scripts/sync_iterations.py
 
   - id: deploy
     name: gcr.io/google.com/cloudsdktool/cloud-sdk
