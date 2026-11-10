@@ -69,12 +69,27 @@ jobs, dataset, Cloud SQL instance, and database URL secret together:
 gcloud builds submit --config=server/cloudbuild.yaml .
 # test
 gcloud builds submit --config=server/cloudbuild.yaml . \
-  --substitutions=_SERVICE=takt-api-test,_BQ_DATASET=takt_test,_CLOUD_SQL_INSTANCE=cost-tracker-490815:europe-west1:takt-db,_DB_URL_SECRET=takt-test-database-url,_MIGRATION_JOB=takt-test-migrate,_EXPORT_JOB=takt-test-export-bigquery
+  --substitutions=_SERVICE=takt-api-test,_BQ_DATASET=takt_test,_CLOUD_SQL_INSTANCE=cost-tracker-490815:europe-west1:takt-db,_DB_URL_SECRET=takt-test-database-url,_MIGRATION_JOB=takt-test-migrate,_EXPORT_JOB=takt-test-export-bigquery,_ITERATIONS_JOB=takt-test-sync-iterations
 ```
 
 `schema.sql` uses the `__TAKT_DS__` placeholder for `<project>.<dataset>`; it
 must be substituted (bootstrap.sh does this) before applying, so it can target
 either dataset.
+
+## GitHub iteration analytics
+
+`server/scripts/sync_iterations.py` snapshots all org Projects v2 iteration fields
+and assigned items into BigQuery `iterations` and `iteration_items`, respecting
+PostgreSQL org-config exclusions and hours-field mappings. Closed projects are
+included. `iteration_hours` joins item hours to deduplicated issue session totals;
+window totals use UTC completion dates and inclusive iteration end dates.
+
+Set `TAKT_GITHUB_PAT` (or `--pat`); scopes: `read:project`, `read:org`, plus `repo`
+for private content. `--dry-run` prints counts and sample rows without BQ access.
+Apply the BigQuery schema before running. Cloud Build deploys `takt-sync-iterations`
+using Secret Manager `takt-github-pat` (grant the runtime SA secret access).
+Schedule hourly with `bash server/scripts/schedule_iterations.sh`; for test use
+`ITERATIONS_JOB=takt-test-sync-iterations` to keep destinations isolated.
 
 ## Storage architecture (local-first)
 

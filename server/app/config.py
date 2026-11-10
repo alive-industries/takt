@@ -29,6 +29,7 @@ class Settings(BaseSettings):
 
     # GitHub
     github_org: str = Field(default="alive-industries")
+    github_pat: str = ""
     github_api_base: str = Field(default="https://api.github.com")
 
     # Auth caching (seconds)
